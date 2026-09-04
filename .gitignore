@@ -1,8 +1,44 @@
+# ── Dependencies ──
 node_modules/
+laravel/vendor/
+
+# ── Build / output ──
 build/
 dist/
-coverage/
-.DS_Store
-*.log
+laravel/public/build
+laravel/public/hot
+
+# ── Env & secrets (ne jamais committer) ──
 .env*
 !.env.example
+laravel/.env
+laravel/.env.backup
+laravel/.env.production
+
+# ── Laravel (cache, storage, tests) ──
+laravel/bootstrap/cache/*.php
+laravel/storage/*.key
+laravel/storage/framework/cache/
+laravel/storage/framework/sessions/
+laravel/storage/framework/views/
+laravel/storage/logs/
+.phpunit.cache/
+.phpunit.result.cache
+laravel/coverage/
+
+# ── Logs & coverage ──
+*.log
+coverage/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── IDE / éditeurs ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Divers local ──
+*.local
