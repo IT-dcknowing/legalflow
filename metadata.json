@@ -1,0 +1,8 @@
+{
+  "name": "Legal Flow FINAL",
+  "description": "Plateforme de conformité fiscale, sociale et juridique ivoirienne (DGI, CNPS, CMU) avec moteurs PayrollTaxEngine et ComplianceScoreEngine (Laravel 12 / PHP 8.3 \u0026 React).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

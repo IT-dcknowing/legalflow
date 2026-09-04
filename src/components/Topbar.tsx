@@ -1,0 +1,183 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Bell, MessageSquare, Menu } from 'lucide-react';
+import { PageId, UserRole, AppUser } from '../types';
+import { LegalFlowLogo } from './LegalFlowLogo';
+import { RoleSwitcher } from './RoleSwitcher';
+
+interface TopbarProps {
+  pageTitle: string;
+  onOpenAssistant: () => void;
+  onNavigateToVeille: () => void;
+  onToggleMobileMenu?: () => void;
+  unreadCount?: number;
+  currentRole?: UserRole;
+  currentUser?: AppUser;
+  isProfileIncomplete?: boolean;
+  onSelectRoleProfile?: (role: UserRole, userKey: string) => void;
+}
+
+export const Topbar: React.FC<TopbarProps> = ({
+  pageTitle,
+  onOpenAssistant,
+  onNavigateToVeille,
+  onToggleMobileMenu,
+  unreadCount = 3,
+  currentRole = 'utilisateur',
+  currentUser,
+  isProfileIncomplete = false,
+  onSelectRoleProfile,
+}) => {
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setNotifOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div
+      id="topbarMain"
+      className="flex items-center justify-between p-[12px_16px] md:p-[16px_28px] border-b border-[#E5E5F0] bg-white sticky top-0 z-20"
+    >
+      <div className="flex items-center gap-2.5 md:gap-3">
+        {/* Mobile Hamburger menu */}
+        {onToggleMobileMenu && (
+          <button
+            onClick={onToggleMobileMenu}
+            className="md:hidden p-1.5 -ml-1 text-[#20263A] hover:bg-[#F6F6FB] rounded-lg transition-colors"
+            aria-label="Ouvrir le menu de navigation"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
+        {/* Mobile brand logo */}
+        <div className="md:hidden">
+          <LegalFlowLogo size="sm" showSubtitle={false} />
+        </div>
+        <h1 id="pageTitle" className="text-[17px] md:text-[18px] m-0 font-extrabold text-[#171A2E] tracking-tight">
+          {pageTitle}
+        </h1>
+      </div>
+
+      <div className="flex items-center gap-2 sm:gap-3 relative" ref={notifRef}>
+        {/* Role Switcher Simulator (Super Admin, Gestionnaire, Utilisateur) */}
+        {onSelectRoleProfile && currentUser && (
+          <RoleSwitcher
+            currentRole={currentRole}
+            currentUser={currentUser}
+            isProfileIncomplete={isProfileIncomplete}
+            onSelectRoleProfile={onSelectRoleProfile}
+          />
+        )}
+
+        {/* Notification Bell button */}
+        <button
+          id="notifBtn"
+          onClick={() => setNotifOpen(!notifOpen)}
+          aria-label="Notifications"
+          className="relative w-[36px] h-[36px] rounded-[8px] border border-[#E5E5F0] bg-white flex items-center justify-center hover:bg-[#F6F6FB] transition-colors"
+        >
+          <Bell className="w-[17px] h-[17px] text-[#20263A]" />
+          {unreadCount > 0 && (
+            <span
+              id="notifBadge"
+              className="absolute -top-[4px] -right-[4px] bg-[#C4432B] text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-[3px]"
+            >
+              {unreadCount}
+            </span>
+          )}
+        </button>
+
+        {/* Notification Dropdown Panel */}
+        {notifOpen && (
+          <div
+            id="notifPanel"
+            className="absolute top-[50px] right-0 w-[320px] bg-white border border-[#E5E5F0] rounded-[12px] shadow-xl z-30 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
+          >
+            <div className="p-[13px_15px] border-b border-[#E5E5F0] font-extrabold text-[13px] text-[#171A2E] flex items-center justify-between">
+              <span>Veille réglementaire</span>
+              <span className="text-[11px] font-semibold text-[#6B6F85]">Côte d'Ivoire</span>
+            </div>
+            <div className="divide-y divide-[#E5E5F0] max-h-[300px] overflow-y-auto">
+              <div
+                className="p-[12px_15px] hover:bg-[#F6F6FB] cursor-pointer transition-colors"
+                onClick={() => {
+                  setNotifOpen(false);
+                  onNavigateToVeille();
+                }}
+              >
+                <div className="font-bold text-[12.5px] text-[#171A2E]">
+                  Nouveau barème CNPS AT/MP
+                </div>
+                <div className="text-[11.5px] text-[#6B6F85] mt-[2px]">
+                  Entrée en vigueur le 01/10/2026 — vous concerne en tant qu'employeur
+                </div>
+              </div>
+              <div
+                className="p-[12px_15px] hover:bg-[#F6F6FB] cursor-pointer transition-colors"
+                onClick={() => {
+                  setNotifOpen(false);
+                  onNavigateToVeille();
+                }}
+              >
+                <div className="font-bold text-[12.5px] text-[#171A2E]">
+                  Révision du seuil RME
+                </div>
+                <div className="text-[11.5px] text-[#6B6F85] mt-[2px]">
+                  Publié le 28/08/2026 — impact à vérifier sur votre régime
+                </div>
+              </div>
+              <div
+                className="p-[12px_15px] hover:bg-[#F6F6FB] cursor-pointer transition-colors"
+                onClick={() => {
+                  setNotifOpen(false);
+                  onNavigateToVeille();
+                }}
+              >
+                <div className="font-bold text-[12.5px] text-[#171A2E]">
+                  Nouvelle procédure FNE
+                </div>
+                <div className="text-[11.5px] text-[#6B6F85] mt-[2px]">
+                  Facturation normalisée électronique — mise à jour du guide
+                </div>
+              </div>
+            </div>
+            <div className="p-[8px_15px] bg-[#F6F6FB] border-t border-[#E5E5F0] text-center">
+              <button
+                id="btnAllVeille"
+                onClick={() => {
+                  setNotifOpen(false);
+                  onNavigateToVeille();
+                }}
+                className="text-[12px] font-bold text-[#4F46A0] hover:underline"
+              >
+                Consulter tous les flashs de veille →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Assistant Button */}
+        <button
+          id="assistOpenBtn"
+          onClick={onOpenAssistant}
+          className="flex items-center gap-[7px] border border-[#E5E5F0] bg-white rounded-[8px] p-[8px_12px] font-bold text-[13px] text-[#20263A] hover:bg-[#F6F6FB] transition-colors"
+        >
+          <MessageSquare className="w-[16px] h-[16px] text-[#4F46A0]" />
+          <span>LEGAL FLOW AI</span>
+        </button>
+
+        {/* User avatar */}
+        <div className="w-[30px] h-[30px] rounded-full bg-[#D9DAF0] flex items-center justify-center font-bold text-[12px] text-[#3D3680]">
+          AK
+        </div>
+      </div>
+    </div>
+  );
+};
