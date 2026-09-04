@@ -121,7 +121,7 @@ export function routeAiContext(
         retards
           .map(
             (r) =>
-              `${r.titre} (${r.administration}, échue le ${r.jour}/${r.mois}, montant: ${r.montantEstime || 'N/A'}, pénalité estimée: ${r.penaliteEstimee ? r.penaliteEstimee.toLocaleString('fr-FR') + ' FCFA' : '10%'})`
+              `${r.titre} (${r.administration}, ${r.echeanceLabel}, sanction légale: ${r.penalitesDetail || r.baseLegale})`
           )
           .join(' ; ')
     );

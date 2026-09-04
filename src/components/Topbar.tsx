@@ -3,9 +3,17 @@ import { Bell, MessageSquare, Menu } from 'lucide-react';
 import { PageId, UserRole, AppUser } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
 import { RoleSwitcher } from './RoleSwitcher';
+import {
+  formatDateReferenceShort,
+  getDateReferenceOverrideIso,
+  setDateReferenceOverride,
+  toIsoDate,
+} from '../services/dateReference';
 
 interface TopbarProps {
   pageTitle: string;
+  dateReference: Date;
+  onQaDateChange?: () => void;
   onOpenAssistant: () => void;
   onNavigateToVeille: () => void;
   onToggleMobileMenu?: () => void;
@@ -18,6 +26,8 @@ interface TopbarProps {
 
 export const Topbar: React.FC<TopbarProps> = ({
   pageTitle,
+  dateReference,
+  onQaDateChange,
   onOpenAssistant,
   onNavigateToVeille,
   onToggleMobileMenu,
@@ -29,6 +39,15 @@ export const Topbar: React.FC<TopbarProps> = ({
 }) => {
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  // Outil QA invisible : forçage de l'horloge uniquement avec ?qa=1 dans l'URL.
+  const [qaVisible] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('qa')
+  );
+  const [qaValue, setQaValue] = useState(
+    () => getDateReferenceOverrideIso() || toIsoDate(dateReference)
+  );
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -172,6 +191,40 @@ export const Topbar: React.FC<TopbarProps> = ({
           <MessageSquare className="w-[16px] h-[16px] text-[#4F46A0]" />
           <span>LEGAL FLOW AI</span>
         </button>
+
+        {/* Horloge unique — AMENDEMENT #2 §1 : TRÈS petit, en haut à droite, tous écrans */}
+        <div className="hidden sm:flex flex-col items-end leading-none mr-0.5" title="Date de référence du logiciel (horloge unique)">
+          <span id="dateReferenceBadge" className="text-[10px] font-semibold text-[#8C90A4] whitespace-nowrap">
+            {formatDateReferenceShort(dateReference)}
+          </span>
+          {qaVisible && (
+            <span className="mt-1 flex items-center gap-1">
+              <input
+                type="date"
+                value={qaValue}
+                onChange={(e) => {
+                  setQaValue(e.target.value);
+                  setDateReferenceOverride(e.target.value || null);
+                  onQaDateChange?.();
+                }}
+                className="text-[10px] border border-[#E5E5F0] rounded px-1 py-0.5 text-[#20263A]"
+                title="QA : forcer dateReference"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setDateReferenceOverride(null);
+                  setQaValue(toIsoDate(new Date()));
+                  onQaDateChange?.();
+                }}
+                className="text-[10px] font-bold text-[#4F46A0] hover:underline"
+                title="QA : retour au système réel"
+              >
+                Réel
+              </button>
+            </span>
+          )}
+        </div>
 
         {/* User avatar */}
         <div className="w-[30px] h-[30px] rounded-full bg-[#D9DAF0] flex items-center justify-center font-bold text-[12px] text-[#3D3680]">

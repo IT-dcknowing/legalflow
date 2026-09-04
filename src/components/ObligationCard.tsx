@@ -19,9 +19,11 @@ import {
   Plus,
 } from 'lucide-react';
 import { Obligation } from '../types';
+import { diffDays, parseIsoDate } from '../services/dateReference';
 
 interface ObligationCardProps {
   obligation: Obligation;
+  dateReference: Date;
   onOpenConfirmModal: (ob: Obligation) => void;
   onOpenSimulator: (ob: Obligation) => void;
   onOpenFiche?: (ficheId: string) => void;
@@ -31,6 +33,7 @@ type TabKey = 'resume' | 'reglementation' | 'historique' | 'simulation';
 
 export const ObligationCard: React.FC<ObligationCardProps> = ({
   obligation: ob,
+  dateReference,
   onOpenConfirmModal,
   onOpenSimulator,
   onOpenFiche,
@@ -56,18 +59,19 @@ export const ObligationCard: React.FC<ObligationCardProps> = ({
       };
     }
     if (ob.echeanceDateIso) {
-      const target = new Date(ob.echeanceDateIso).getTime();
-      const currentSimulated = new Date('2026-09-04').getTime();
-      const diffDays = Math.ceil((target - currentSimulated) / (1000 * 60 * 60 * 24));
-      if (diffDays <= 0) {
+      const target = parseIsoDate(ob.echeanceDateIso);
+      // AMENDEMENT #2 : badge calculé depuis dateReference (horloge unique), jamais en dur.
+      // daysLeft > 0 = échéance future ; <= 0 = aujourd'hui ou dépassée.
+      const daysLeft = target ? diffDays(dateReference, target) : 999;
+      if (daysLeft <= 0) {
         return {
           label: 'Aujourd’hui',
           classes: 'bg-[#FBEAE5] text-[#C4432B] border border-[#F8B4A6]',
         };
       }
-      if (diffDays <= 7) {
+      if (daysLeft <= 7) {
         return {
-          label: `J-${diffDays}`,
+          label: `J-${daysLeft}`,
           classes: 'bg-[#FEF3D6] text-[#B06000] border border-[#FAD98D]',
         };
       }
@@ -152,11 +156,8 @@ export const ObligationCard: React.FC<ObligationCardProps> = ({
                 <strong className="text-[#171A2E]">{ob.montantEstime || 'Variable'}</strong>
               </span>
 
-              {ob.penaliteEstimee && isRetard && !hasSimulation && (
-                <span className="text-[#C4432B] font-bold">
-                  Majoration encourue : +{ob.penaliteEstimee.toLocaleString('fr-FR')} FCFA
-                </span>
-              )}
+              {/* AMENDEMENT #2 §4 : aucune majoration calculée affichée.
+                  Seul le bloc « Sanction légale » (texte statique, onglet Réglementation) subsiste. */}
 
               {hasSimulation && ob.simulation?.datePaiementPrevue && (
                 <span className="text-[#3D3680] font-semibold flex items-center gap-1 bg-[#F5F3FF] px-2 py-0.5 rounded-md">

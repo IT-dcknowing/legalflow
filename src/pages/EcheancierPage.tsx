@@ -3,14 +3,16 @@ import {
   Calendar,
   Search,
   Plus,
-  Filter,
+  History,
 } from 'lucide-react';
 import { Obligation, CostSimulation } from '../types';
 import { ObligationCard } from '../components/ObligationCard';
 import { CostSimulationDrawer } from '../components/CostSimulationDrawer';
+import { groupObligations } from '../services/echeancier';
 
 interface EcheancierPageProps {
   obligations: Obligation[];
+  dateReference: Date;
   onOpenConfirmModal: (ob: Obligation) => void;
   onOpenAddDeadlineModal: () => void;
   onOpenFiche?: (ficheId: string) => void;
@@ -20,6 +22,7 @@ interface EcheancierPageProps {
 
 export const EcheancierPage: React.FC<EcheancierPageProps> = ({
   obligations,
+  dateReference,
   onOpenConfirmModal,
   onOpenAddDeadlineModal,
   onOpenFiche,
@@ -28,6 +31,8 @@ export const EcheancierPage: React.FC<EcheancierPageProps> = ({
 }) => {
   const [selectedAdmin, setSelectedAdmin] = useState<string>('Toutes');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  // AMENDEMENT #2 §2 : vue active (3 blocs) vs historique des quittances pointées.
+  const [vue, setVue] = useState<'actif' | 'historique'>('actif');
 
   // État du Drawer de simulation de coût réel
   const [simulatingObligation, setSimulatingObligation] = useState<Obligation | null>(null);
@@ -95,8 +100,23 @@ export const EcheancierPage: React.FC<EcheancierPageProps> = ({
     });
   }, [obligations, selectedAdmin, searchQuery]);
 
-  // Group by month
-  const monthGroups = ['Août 2026', 'Septembre 2026', 'Échéances annuelles'];
+  // Groupes roulants depuis dateReference — UN SEUL algorithme partagé avec le dashboard.
+  // Aucun mois codé en dur : les libellés sont calculés (En retard / Mois en cours / Mois prochain).
+  const groupes = useMemo(
+    () => groupObligations(filteredObligations, dateReference),
+    [filteredObligations, dateReference]
+  );
+
+  const blocks =
+    vue === 'actif'
+      ? [
+          { key: 'retard', label: `En retard (${groupes.enRetard.length})`, items: groupes.enRetard },
+          { key: 'encours', label: `${groupes.moisEnCoursLabel} (${groupes.moisEnCours.length})`, items: groupes.moisEnCours },
+          { key: 'prochain', label: `${groupes.moisProchainLabel} (${groupes.moisProchain.length})`, items: groupes.moisProchain },
+        ]
+      : [
+          { key: 'historique', label: `Historique (${groupes.historique.length})`, items: groupes.historique },
+        ];
 
   const handleOpenSimulator = (ob: Obligation) => {
     setSimulatingObligation(ob);
@@ -210,7 +230,32 @@ export const EcheancierPage: React.FC<EcheancierPageProps> = ({
         </div>
       </div>
 
-      {/* 2. Groupes chronologiques par mois */}
+      {/* 2. Sélecteur de vue Active / Historique (soldés par quittance pointée) */}
+      <div className="flex items-center gap-2">
+        <div className="inline-flex bg-[#F1F5F9] rounded-xl p-1 gap-1">
+          <button
+            type="button"
+            onClick={() => setVue('actif')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              vue === 'actif' ? 'bg-white text-[#3D3680] shadow-xs' : 'text-[#64748B] hover:text-[#1E293B]'
+            }`}
+          >
+            Actif
+          </button>
+          <button
+            type="button"
+            onClick={() => setVue('historique')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              vue === 'historique' ? 'bg-white text-[#3D3680] shadow-xs' : 'text-[#64748B] hover:text-[#1E293B]'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Historique ({groupes.historique.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 3. Blocs roulants : En retard (triés par jours) / Mois en cours / Mois prochain */}
       {filteredObligations.length === 0 ? (
         <div className="bg-white border border-[#E5E5F0] rounded-2xl p-10 text-center space-y-2">
           <Calendar className="w-10 h-10 text-[#8C90A4] mx-auto" />
@@ -231,39 +276,51 @@ export const EcheancierPage: React.FC<EcheancierPageProps> = ({
           </button>
         </div>
       ) : (
-        monthGroups.map((group) => {
-          const groupItems = filteredObligations.filter((o) => o.moisGroupe === group);
-          if (groupItems.length === 0) return null;
-
+        blocks.map((block) => {
           return (
-            <div key={group} className="space-y-3">
+            <div key={block.key} className="space-y-3">
               <div className="flex items-center justify-between px-1">
                 <div className="text-xs font-black uppercase tracking-wider text-[#3D3680] flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 text-[#4F46A0]" />
-                  <span>{group}</span>
+                  {block.key === 'historique' ? (
+                    <History className="w-3.5 h-3.5 text-[#4F46A0]" />
+                  ) : (
+                    <Calendar className="w-3.5 h-3.5 text-[#4F46A0]" />
+                  )}
+                  <span>{block.label}</span>
                 </div>
                 <span className="text-[11px] font-semibold text-[#6B6F85]">
-                  {groupItems.length} obligation{groupItems.length > 1 ? 's' : ''}
+                  {block.items.length} obligation{block.items.length > 1 ? 's' : ''}
                 </span>
               </div>
 
-              <div className="space-y-3">
-                {groupItems.map((ob) => (
-                  <ObligationCard
-                    key={ob.id}
-                    obligation={ob}
-                    onOpenConfirmModal={onOpenConfirmModal}
-                    onOpenSimulator={handleOpenSimulator}
-                    onOpenFiche={onOpenFiche}
-                  />
-                ))}
-              </div>
+              {block.items.length === 0 ? (
+                <div className="bg-white border border-dashed border-[#CBD5E1] rounded-2xl p-6 text-center text-xs text-[#64748B]">
+                  {block.key === 'retard'
+                    ? 'Aucune échéance en retard. Toutes les obligations échues sont couvertes par quittance.'
+                    : block.key === 'historique'
+                    ? 'Aucune quittance pointée pour le moment. Les éléments soldés apparaîtront ici.'
+                    : 'Aucune échéance sur ce mois.'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {block.items.map((ob) => (
+                    <ObligationCard
+                      key={ob.id}
+                      obligation={ob}
+                      dateReference={dateReference}
+                      onOpenConfirmModal={onOpenConfirmModal}
+                      onOpenSimulator={handleOpenSimulator}
+                      onOpenFiche={onOpenFiche}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })
       )}
 
-      {/* 3. Drawer latéral de Simulation de coût réel */}
+      {/* 4. Drawer latéral de Simulation de coût réel */}
       <CostSimulationDrawer
         isOpen={isSimulatorDrawerOpen}
         obligation={simulatingObligation}

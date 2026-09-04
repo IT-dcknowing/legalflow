@@ -13,12 +13,13 @@ import {
   FileText,
 } from 'lucide-react';
 import { Obligation, PageId, CompanyProfile, OpportunityItem, FlashVeille } from '../types';
-import { ObligationEngine, ObligationInstance } from '../services/obligationEngine';
+import { groupObligations, selectAlertesUrgentes, joursRetardOf } from '../services/echeancier';
 import { initialCompany, initialOpportunities, initialFlashs } from '../data/mockData';
 import { IncompleteProfileBanner } from '../components/IncompleteProfileBanner';
 
 interface DashboardPageProps {
   obligations: Obligation[];
+  dateReference: Date;
   companyProfile?: CompanyProfile;
   opportunities?: OpportunityItem[];
   flashs?: FlashVeille[];
@@ -33,6 +34,7 @@ interface DashboardPageProps {
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   obligations,
+  dateReference,
   companyProfile = initialCompany,
   opportunities = initialOpportunities,
   flashs = initialFlashs,
@@ -46,29 +48,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 }) => {
   const [isSecondaryExpanded, setIsSecondaryExpanded] = useState(false);
 
-  // Moteur réglementaire officiel : Résolution dynamique basée sur le profil réel
-  const quittancesMap = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    obligations.forEach((ob) => {
-      if (ob.statut === 'accomplie' || Boolean(ob.quittanceRef)) {
-        map[ob.id] = true;
-      }
-    });
-    return map;
-  }, [obligations]);
-
-  const engineOutput = useMemo(() => {
-    return ObligationEngine.resolve(companyProfile, quittancesMap);
-  }, [companyProfile, quittancesMap]);
-
-  const {
-    scoreConformite,
-    nombreEnRetard,
-    nombreAJour,
-    nombreObligationsTotal,
-    prochaineEcheance,
-    alertesUrgentes,
-  } = engineOutput;
+  // AMENDEMENT #2 §3 : vitrine du MÊME algorithme que l'échéancier (source unique).
+  // Dashboard = top 3 de « En retard » + compteur total réel ; échéancier = liste complète.
+  const groupes = useMemo(
+    () => groupObligations(obligations, dateReference),
+    [obligations, dateReference]
+  );
+  const alertesUrgentes = useMemo(() => selectAlertesUrgentes(groupes, 3), [groupes]);
+  const nombreEnRetard = groupes.totalLate;
+  const nombreObligationsTotal = obligations.length;
+  const nombreAJour = Math.max(0, nombreObligationsTotal - nombreEnRetard);
+  const scoreConformite =
+    nombreObligationsTotal > 0 ? Math.round((nombreAJour / nombreObligationsTotal) * 100) : 100;
+  const prochaineEcheance = useMemo(() => {
+    const next = groupes.moisEnCours[0] || groupes.moisProchain[0] || null;
+    if (!next) return null;
+    return {
+      label: next.titre,
+      dateEcheance: next.echeanceLabel,
+      teleservice: next.administration,
+      baseLegale: next.baseLegale,
+    };
+  }, [groupes]);
 
   // Qualification du score
   const qualification =
@@ -177,10 +178,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
             <div className="bg-white/15 backdrop-blur-xs border border-white/20 rounded-xl px-4 py-2 text-center min-w-[105px]">
               <div className="text-2xl font-black text-white leading-none">
-                {alertesUrgentes.length}
+                {groupes.moisEnCours.length + groupes.moisProchain.length}
               </div>
               <div className="text-[10px] font-semibold text-white/80 mt-1 uppercase tracking-wider">
-                Alertes urgentes
+                À venir
               </div>
             </div>
           </div>
@@ -202,7 +203,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 Score de Conformité Global
               </h2>
               <div className="text-[11px] text-[#64748B] mt-0.5">
-                Calculé dynamiquement par ObligationEngine (obligations à jour : {nombreAJour} / {nombreObligationsTotal})
+                Calculé depuis l'échéancier unifié (obligations à jour : {nombreAJour} / {nombreObligationsTotal})
               </div>
             </div>
           </div>
@@ -359,13 +360,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
       </div>
 
-      {/* 3. Priorité Haute : Alertes Urgentes (Issus du ObligationEngine, AUCUN montant FCFA) */}
+      {/* 3. Priorité Haute : Alertes Urgentes (extrait du bloc « En retard », AUCUN montant FCFA) */}
       <div id="blockAlertesSemaine" className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-[#B91C1C]" />
             <h3 className="text-xs font-black text-[#1E293B] uppercase tracking-wider m-0">
-              Alertes urgentes ({alertesUrgentes.length})
+              Alertes urgentes ({nombreEnRetard})
             </h3>
           </div>
           <button
@@ -376,7 +377,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </button>
         </div>
 
-        {alertesUrgentes.length === 0 ? (
+        {nombreEnRetard === 0 ? (
           <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 text-center space-y-2">
             <CheckCircle2 className="w-7 h-7 text-[#15803D] mx-auto" />
             <div className="text-sm font-bold text-[#1E293B]">
@@ -390,10 +391,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             {alertesUrgentes.map((ob) => {
               const isRetard = ob.statut === 'en_retard';
+              const jours = joursRetardOf(ob, dateReference);
               return (
                 <div
-                  key={ob.ruleId}
-                  id={`cardAlerte-${ob.ruleId}`}
+                  key={ob.id}
+                  id={`cardAlerte-${ob.id}`}
                   className={`bg-white border rounded-xl p-4 flex flex-col justify-between gap-3.5 transition-all hover:shadow-xs ${
                     isRetard ? 'border-[#FCA5A5]' : 'border-[#E2E8F0]'
                   }`}
@@ -413,17 +415,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             isRetard ? 'bg-[#B91C1C]' : 'bg-[#D97706]'
                           }`}
                         />
-                        {isRetard ? `En retard (${ob.joursRetard} jours)` : 'Échéance imminente'}
+                        {isRetard ? `En retard (${jours} jours)` : 'Échéance imminente'}
                       </span>
-                      <span className="text-[11px] font-semibold text-[#64748B] truncate max-w-[130px]" title={ob.teleservice}>
-                        {ob.teleservice}
+                      <span className="text-[11px] font-semibold text-[#64748B] truncate max-w-[130px]" title={ob.administration}>
+                        {ob.administration}
                       </span>
                     </div>
 
                     {/* Titre & Référence Légale */}
                     <div>
                       <h4 className="text-[13.5px] font-bold text-[#1E293B] leading-snug m-0">
-                        {ob.label}
+                        {ob.titre}
                       </h4>
                       <div className="text-[11px] font-semibold text-[#4F46A0] mt-0.5">
                         {ob.baseLegale}
@@ -437,11 +439,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                           <Clock className="w-3.5 h-3.5 text-[#94A3B8]" />
                           Échéance :
                         </span>
-                        <strong className="text-[#1E293B] font-extrabold">{ob.dateEcheance}</strong>
+                        <strong className="text-[#1E293B] font-extrabold">{ob.echeanceLabel}</strong>
                       </div>
                       <div className="bg-[#FEF2F2] border border-[#FEE2E2] rounded-lg p-2.5 text-[11px] text-[#991B1B] leading-relaxed">
                         <div className="font-bold mb-0.5">Sanction légale :</div>
-                        <div className="font-medium">{ob.majorationTexte}</div>
+                        <div className="font-medium">{ob.penalitesDetail || 'Voir textes officiels'}</div>
                       </div>
                     </div>
                   </div>
@@ -449,7 +451,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   {/* Bouton d'action Pointer la quittance */}
                   <div className="pt-1">
                     <button
-                      onClick={() => onOpenConfirmModal(ObligationEngine.instanceToObligation(ob))}
+                      onClick={() => onOpenConfirmModal(ob)}
                       className="w-full bg-[#4F46A0] hover:bg-[#3D3680] text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />

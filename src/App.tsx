@@ -14,7 +14,6 @@ import {
   CostSimulation,
 } from './types';
 import {
-  initialObligations,
   initialCompanyProfile,
   initialOpportunities,
   initialFiches,
@@ -24,6 +23,16 @@ import {
 } from './data/mockData';
 import { mockUsers, initialCompaniesEntities, checkIsProfileComplete } from './data/rolesData';
 import { ObligationEngine } from './services/obligationEngine';
+import {
+  diffDays,
+  formatDateLong,
+  formatMonthLabel,
+  getDateReference,
+  initDateReferenceQaHook,
+  parseIsoDate,
+  pillForDate,
+} from './services/dateReference';
+import { groupObligations } from './services/echeancier';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { AssistantPanel } from './components/AssistantPanel';
@@ -84,7 +93,44 @@ export function App() {
   const [isGestionnaireInCompanyMode, setIsGestionnaireInCompanyMode] = useState<boolean>(false);
   const [companyPendingEnter, setCompanyPendingEnter] = useState<CompanyEntity | null>(null);
 
-  const [obligations, setObligations] = useState<Obligation[]>(initialObligations);
+  // AMENDEMENT #2 — horloge unique + source unique : le pipeline roulant du moteur.
+  // `dateReference` (système réel par défaut, forçable en QA) pilote tout.
+  const [dateTick, setDateTick] = useState(0);
+  const dateReference = React.useMemo(() => getDateReference(), [dateTick]);
+  React.useEffect(() => {
+    initDateReferenceQaHook(() => setDateTick((t) => t + 1));
+  }, []);
+
+  // Quittances pointées par occurrence (clé stable `RULE_…@AAAA-MM-JJ` ou `custom-…`).
+  // Pointer fait disparaître l'élément de « En retard » dans LES DEUX vues (critère 4).
+  const [quittances, setQuittances] = useState<Record<string, { ref: string; date: string; file?: string }>>({});
+  // Simulations de coût réel par occurrence (montants saisis, jamais calculés).
+  const [simulations, setSimulations] = useState<Record<string, CostSimulation>>({
+    'RULE_TVA_MENSUELLE@2026-08-20': {
+      lines: [
+        { id: 'sim-1', label: 'Montant principal TVA déclaré', montant: 600000 },
+        { id: 'sim-2', label: 'Majoration légale 10% (Art. 1083 CGI)', montant: 60000 },
+        { id: 'sim-3', label: 'Intérêt moratoire de retard (1% / mois)', montant: 6000 },
+        { id: 'sim-4', label: 'Pénalité pour déclaration tardive', montant: 19000 },
+      ],
+      total: 685000,
+      datePaiementPrevue: '2026-09-12',
+      rappelActif: true,
+      savedAt: '2026-09-02T10:30:00Z',
+    },
+  });
+  // Échéances libres ajoutées par le cabinet (brouillons datés, statut dérivé de dateReference).
+  const [customDrafts, setCustomDrafts] = useState<
+    Array<{ id: string; titre: string; domaine: Obligation['domaine']; dateIso: string; montant: string }>
+  >([]);
+
+  const pointedKeys = React.useMemo(() => {
+    const map: Record<string, boolean> = {};
+    Object.keys(quittances).forEach((k) => {
+      map[k] = true;
+    });
+    return map;
+  }, [quittances]);
   const [profile, setProfile] = useState<CompanyProfile>(() => {
     const active = initialCompaniesEntities.find((c) => c.id === 'ent-koffi') || initialCompaniesEntities[0];
     return entityToProfile(active);
@@ -116,20 +162,75 @@ export function App() {
   const [reportModalState, setReportModalState] = useState<'miroir' | 'certifie'>('miroir');
   const [reportModalProfile, setReportModalProfile] = useState<CompanyProfile | null>(null);
 
-  // Résolution dynamique continue des obligations selon le profil réel par ObligationEngine
-  const quittancesMap = React.useMemo(() => {
-    const map: Record<string, boolean> = {};
-    obligations.forEach((ob) => {
-      if (ob.statut === 'accomplie' || Boolean(ob.quittanceRef)) {
-        map[ob.id] = true;
-      }
-    });
-    return map;
-  }, [obligations]);
-
+  // Résolution roulante unique : occurrences moteur + échéances libres, enrichies
+  // (quittances, simulations). Dashboard ET échéancier lisent CETTE liste.
   const engineOutput = React.useMemo(() => {
-    return ObligationEngine.resolve(profile, quittancesMap);
-  }, [profile, quittancesMap]);
+    return ObligationEngine.resolve(profile, pointedKeys, dateReference);
+  }, [profile, pointedKeys, dateReference]);
+
+  const obligations = React.useMemo<Obligation[]>(() => {
+    const list: Obligation[] = engineOutput.obligationsActives.map((inst) =>
+      ObligationEngine.instanceToObligation(inst, dateReference)
+    );
+    for (const d of customDrafts) {
+      const parsed = parseIsoDate(d.dateIso);
+      const pill = parsed ? pillForDate(parsed) : { jour: '15', mois: '—' };
+      const lag = parsed ? diffDays(parsed, dateReference) : 0;
+      const ahead = parsed ? diffDays(dateReference, parsed) : 999;
+      const late = lag > 0;
+      const imminent = !late && ahead >= 0 && ahead <= 7;
+      list.push({
+        id: d.id,
+        titre: d.titre,
+        echeanceLabel: parsed
+          ? late
+            ? `Échéance dépassée le ${formatDateLong(parsed)}`
+            : `Échéance le ${formatDateLong(parsed)}`
+          : d.titre,
+        dateIso: d.dateIso,
+        echeanceDateIso: d.dateIso,
+        statut: late ? 'en_retard' : imminent ? 'imminente' : 'a_venir',
+        tagLabel: late ? `En retard (${lag}j)` : imminent ? 'Imminent' : 'À venir',
+        tagClass: late ? 'retard' : imminent ? 'imminent' : 'avenir',
+        domaine: d.domaine,
+        jour: pill.jour,
+        mois: pill.mois,
+        moisGroupe: parsed ? formatMonthLabel(parsed) : '',
+        montantEstime: d.montant || undefined,
+        administration: d.domaine === 'social' ? 'CNPS' : d.domaine === 'douanes' ? 'Douanes (DGD)' : 'DGI',
+        baseLegale: 'Déclaration spontanée',
+      });
+    }
+    return list.map((ob) => {
+      const q = quittances[ob.id];
+      const sim = simulations[ob.id];
+      if (!q && !sim) return ob;
+      return {
+        ...ob,
+        ...(q
+          ? {
+              statut: 'accomplie' as const,
+              quittanceRef: q.ref,
+              dateDeclaration: q.date,
+              tagLabel: 'Accomplie',
+              tagClass: 'fait' as const,
+              pieceJointeUrl: q.file ? `/uploads/${q.file}` : undefined,
+            }
+          : {}),
+        ...(sim ? { simulation: sim } : {}),
+      };
+    });
+  }, [engineOutput, customDrafts, quittances, simulations, dateReference]);
+
+  // Compteurs globaux cohérents : même source que les deux vues.
+  const groupesGlobaux = React.useMemo(
+    () => groupObligations(obligations, dateReference),
+    [obligations, dateReference]
+  );
+  const scoreConformiteGlobal =
+    obligations.length > 0
+      ? Math.round(((obligations.length - groupesGlobaux.totalLate) / obligations.length) * 100)
+      : 100;
 
   // Page titles map
   const pageTitles: Record<PageId, string> = {
@@ -263,27 +364,18 @@ export function App() {
     setCompanyTargetForManager(null);
   };
 
-  // Mark obligation as accomplished
+  // Pointer une quittance : l'occurrence passe soldée et disparaît de « En retard »
+  // dans l'échéancier ET le dashboard en même temps (critère 4).
   const handleConfirmObligation = (
     obligationId: string,
     quittanceRef: string,
     declarationDate: string,
     fileName?: string
   ) => {
-    setObligations((prev) =>
-      prev.map((ob) => {
-        if (ob.id === obligationId) {
-          return {
-            ...ob,
-            statut: 'accomplie',
-            quittanceRef,
-            dateDeclaration: declarationDate,
-            pieceJointeUrl: fileName ? `/uploads/${fileName}` : undefined,
-          };
-        }
-        return ob;
-      })
-    );
+    setQuittances((prev) => ({
+      ...prev,
+      [obligationId]: { ref: quittanceRef, date: declarationDate, file: fileName },
+    }));
 
     // If a document was attached, add to documents list
     if (fileName) {
@@ -299,18 +391,18 @@ export function App() {
     }
   };
 
-  // Sauvegarde d'une simulation de coût réel par obligation
+  // Sauvegarde d'une simulation de coût réel par occurrence
   const handleSaveSimulation = (obligationId: string, simulation: CostSimulation) => {
-    setObligations((prev) =>
-      prev.map((ob) => (ob.id === obligationId ? { ...ob, simulation } : ob))
-    );
+    setSimulations((prev) => ({ ...prev, [obligationId]: simulation }));
   };
 
   // Suppression d'une simulation de coût réel
   const handleDeleteSimulation = (obligationId: string) => {
-    setObligations((prev) =>
-      prev.map((ob) => (ob.id === obligationId ? { ...ob, simulation: undefined } : ob))
-    );
+    setSimulations((prev) => {
+      const next = { ...prev };
+      delete next[obligationId];
+      return next;
+    });
   };
 
   // Ouverture du Rapport d'Audit (Miroir ou Certifié)
@@ -326,7 +418,7 @@ export function App() {
     handleOpenReportModal('certifie', prof);
   };
 
-  // Add custom deadline
+  // Échéance libre du cabinet : statut et libellés dérivés de dateReference (jamais en dur).
   const handleAddCustomDeadline = (newDeadline: {
     titre: string;
     domaine: 'fiscal' | 'social' | 'douanes' | 'commerce' | 'administratif';
@@ -334,29 +426,16 @@ export function App() {
     montant: string;
     moisGroupe: string;
   }) => {
-    const d = new Date(newDeadline.dateIso);
-    const monthsShort = ['JANV', 'FÉVR', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUIL', 'AOÛT', 'SEPT', 'OCT', 'NOV', 'DÉC'];
-    const jour = String(d.getDate()).padStart(2, '0');
-    const mois = monthsShort[d.getMonth()];
-
-    const newObligation: Obligation = {
-      id: `custom-${Date.now()}`,
-      titre: newDeadline.titre,
-      domaine: newDeadline.domaine,
-      statut: 'imminente',
-      tagLabel: 'Imminent',
-      tagClass: 'imminent',
-      echeanceLabel: `Échéance le ${jour}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`,
-      echeanceDateIso: newDeadline.dateIso,
-      jour,
-      mois,
-      moisGroupe: newDeadline.moisGroupe,
-      montantEstime: newDeadline.montant,
-      administration: newDeadline.domaine === 'social' ? 'CNPS' : 'DGI',
-      baseLegale: 'Déclaration spontanée',
-    };
-
-    setObligations((prev) => [newObligation, ...prev]);
+    setCustomDrafts((prev) => [
+      {
+        id: `custom-${Date.now()}`,
+        titre: newDeadline.titre,
+        domaine: newDeadline.domaine,
+        dateIso: newDeadline.dateIso,
+        montant: newDeadline.montant,
+      },
+      ...prev,
+    ]);
   };
 
   const handleNavigate = (page: PageId | string) => {
@@ -373,8 +452,8 @@ export function App() {
       <Sidebar
         activePage={activePage}
         onNavigate={handleNavigate}
-        retardCount={engineOutput.nombreEnRetard}
-        complianceScore={engineOutput.scoreConformite}
+        retardCount={groupesGlobaux.totalLate}
+        complianceScore={scoreConformiteGlobal}
         isMobileOpen={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
         role={currentRole}
@@ -407,6 +486,8 @@ export function App() {
           {/* Topbar */}
           <Topbar
             pageTitle={pageTitles[activePage] || 'Legal Flow'}
+            dateReference={dateReference}
+            onQaDateChange={() => setDateTick((t) => t + 1)}
             onOpenAssistant={() => setIsAssistantOpen(true)}
             onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
             onNavigateToVeille={() => {
@@ -509,6 +590,7 @@ export function App() {
             {activePage === 'dashboard' && (
               <DashboardPage
                 obligations={obligations}
+                dateReference={dateReference}
                 companyProfile={profile}
                 opportunities={opportunities}
                 flashs={flashs}
@@ -535,6 +617,7 @@ export function App() {
             {activePage === 'echeancier' && (
               <EcheancierPage
                 obligations={obligations}
+                dateReference={dateReference}
                 onOpenConfirmModal={(ob) => setConfirmModalObligation(ob)}
                 onOpenAddDeadlineModal={() => setIsAddDeadlineOpen(true)}
                 onOpenFiche={(ficheId) => {

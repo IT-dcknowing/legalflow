@@ -9,7 +9,19 @@
  *
  * RÈGLE D'OR : Aucun montant en FCFA calculé arbitrairement.
  * Textes exacts des sanctions et références légales uniquement.
+ *
+ * AMENDEMENT #2 : les échéances sont générées EN ROULANT relativement à
+ * `dateReference` (horloge unique). Aucune date codée en dur dans l'algorithme.
  */
+import {
+  diffDays,
+  formatDateLong,
+  formatMonthLabel,
+  getDateReference,
+  parseIsoDate,
+  pillForDate,
+  toIsoDate,
+} from './dateReference';
 
 export interface CompanyProfile {
   id?: string;
@@ -47,6 +59,7 @@ export interface Rule {
   periodicite: 'mensuelle' | 'trimestrielle' | 'annuelle' | 'evenementielle';
   jourDuMois?: number;
   moisEcheance?: number; // 1-12 si annuel
+  trimestreMois?: number[]; // mois d'échéance si trimestrielle (ex. [4, 6, 9])
   regimesApplicables?: string[]; // ['RSI', 'RNI', 'RME', 'TEE', 'TOUS']
   secteursApplicables?: string[]; // ['BTP', 'TOUS', ...]
   minEffectif?: number;
@@ -56,6 +69,7 @@ export interface Rule {
 }
 
 export interface ObligationInstance {
+  key: string; // identifiant stable d'occurrence : `${ruleId}@${dateIso}`
   ruleId: string;
   label: string;
   domaine: ObligationDomain;
@@ -81,6 +95,95 @@ export interface EngineOutput {
 }
 
 /**
+ * Helpers de génération roulante — AMENDEMENT #2 : aucune date codée en dur,
+ * toutes les occurrences sont calculées relativement à `dateReference`.
+ */
+
+/** Nombre de jours dans un mois (clamp : jour 31 → février, mois courts…). */
+function daysInMonth(year: number, monthIndex: number): number {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function monthlyDate(year: number, monthIndex: number, jour: number): Date {
+  return new Date(year, monthIndex, Math.min(jour, daysInMonth(year, monthIndex)), 12, 0, 0, 0);
+}
+
+/** Dernière occurrence mensuelle échue (≤ ref) + les 2 prochaines (mois en cours et mois prochain). */
+function monthlyTriple(jour: number, ref: Date): { past: Date; next: Date; following: Date } {
+  const y = ref.getFullYear();
+  const m = ref.getMonth();
+  const candidate = monthlyDate(y, m, jour);
+  const shift = (baseY: number, baseM: number, delta: number): Date => {
+    const total = baseY * 12 + baseM + delta;
+    const yy = Math.floor(total / 12);
+    const mm = total % 12;
+    return monthlyDate(yy, mm, jour);
+  };
+  if (candidate.getTime() <= ref.getTime()) {
+    return { past: candidate, next: shift(y, m, 1), following: shift(y, m, 2) };
+  }
+  return { past: shift(y, m, -1), next: candidate, following: shift(y, m, 1) };
+}
+
+/** Dernière occurrence périodique échue + prochaine (trimestrielle, listes de mois). */
+function periodicPair(months: number[], jour: number, ref: Date): { past: Date; next: Date } {
+  const y = ref.getFullYear();
+  const cands: Date[] = [];
+  for (const yy of [y - 1, y, y + 1]) {
+    for (const mo of months) cands.push(monthlyDate(yy, mo - 1, jour));
+  }
+  cands.sort((a, b) => a.getTime() - b.getTime());
+  let past = cands[0];
+  let next = cands[cands.length - 1];
+  for (const c of cands) {
+    if (c.getTime() <= ref.getTime()) past = c;
+    else {
+      next = c;
+      break;
+    }
+  }
+  return { past, next };
+}
+
+function emitOccurrence(
+  instances: ObligationInstance[],
+  rule: Rule,
+  echeanceDate: Date,
+  refDate: Date,
+  pointedMap: Record<string, boolean>
+): void {
+  const dateIso = toIsoDate(echeanceDate);
+  const key = `${rule.id}@${dateIso}`;
+  const lag = diffDays(echeanceDate, refDate);
+  const isPointed = pointedMap[key] === true;
+  let statut: 'en_retard' | 'a_jour' | 'a_venir';
+  let joursRetard = 0;
+  if (isPointed) {
+    statut = 'a_jour';
+  } else if (lag > 0) {
+    statut = 'en_retard';
+    joursRetard = lag;
+  } else {
+    statut = 'a_venir';
+  }
+  instances.push({
+    key,
+    ruleId: rule.id,
+    label: rule.label,
+    domaine: rule.domaine,
+    baseLegale: rule.baseLegale,
+    dateEcheance: formatDateLong(echeanceDate),
+    dateEcheanceIso: dateIso,
+    statut,
+    joursRetard,
+    majorationTexte: rule.majorationTexte,
+    teleservice: rule.teleservice,
+    periodicite: rule.echeance,
+    description: rule.conditions,
+  });
+}
+
+/**
  * Catalogue exhaustif des règles réglementaires issues des extractions officielles
  */
 export const LEGAL_RULES: Rule[] = [
@@ -91,12 +194,12 @@ export const LEGAL_RULES: Rule[] = [
     label: 'Déclaration & Paiement TVA',
     baseLegale: 'Articles 339 et suivants du CGI',
     conditions: 'Contribuables assujettis au régime réel (RSI et RNI)',
-    echeance: '15 de chaque mois (RSI/RNI)',
+    echeance: '20 de chaque mois (RSI/RNI)',
     majorationTexte: 'Majoration de 10% sur les droits dus + 1% d’intérêt de retard par mois (Art. 1083 CGI)',
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt, O41 / IMPOTS ET TAXES.txt, IT_22',
     periodicite: 'mensuelle',
-    jourDuMois: 15,
+    jourDuMois: 20,
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -168,6 +271,8 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt, O03',
     periodicite: 'trimestrielle',
+    jourDuMois: 15,
+    trimestreMois: [4, 6, 9],
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -181,6 +286,8 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt, O34-O35 / AF 2026, AF_10',
     periodicite: 'annuelle',
+    jourDuMois: 15,
+    moisEcheance: 7,
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -194,6 +301,8 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (Téléprocédure DGI CI)',
     source: 'LOI ANNEXE FISCALE 2026, AF_21 / CALENDRIER DES OBLIGATIONS FISCALES.txt, O01',
     periodicite: 'annuelle',
+    jourDuMois: 30,
+    moisEcheance: 5,
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -207,6 +316,8 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'LOI ANNEXE FISCALE 2026, AF_24',
     periodicite: 'annuelle',
+    jourDuMois: 30,
+    moisEcheance: 5,
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -220,6 +331,8 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt, O02, O16',
     periodicite: 'annuelle',
+    jourDuMois: 30,
+    moisEcheance: 5,
     minEffectif: 1,
     regimesApplicables: ['TOUS'],
   },
@@ -325,7 +438,38 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'Ordre des Experts-Comptables / DGI CI',
     source: 'SYSCOHADA.txt, SY_01, SY_02',
     periodicite: 'annuelle',
+    jourDuMois: 31,
+    moisEcheance: 12,
     regimesApplicables: ['RSI', 'RNI'],
+  },
+  {
+    id: 'RULE_IRVM_DISTRIBUTIONS',
+    domaine: 'fiscal',
+    label: 'Retenue IRVM sur dividendes & distributions',
+    baseLegale: 'Articles 1085 et suivants du CGI',
+    conditions: 'Toute société distribuant des dividendes ou revenus de valeurs mobilières',
+    echeance: 'Reversement mensuel de la retenue opérée',
+    majorationTexte: 'Majoration de 25% en cas de non-retenue ou de reversement tardif (Art. 1085 CGI)',
+    teleservice: 'e-impots.gouv.ci (DGI CI)',
+    source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt / CGI 2026',
+    periodicite: 'mensuelle',
+    jourDuMois: 31,
+    regimesApplicables: ['TOUS'],
+  },
+  {
+    id: 'RULE_CMU_COTISATIONS',
+    domaine: 'social',
+    label: 'Cotisation CMU des salariés (CNAM)',
+    baseLegale: 'Décret portant généralisation de la Couverture Maladie Universelle (CMU)',
+    conditions: 'Tout employeur du secteur privé pour l’intégralité de ses salariés déclarés',
+    echeance: '10 de chaque mois via la CNAM / e-CNPS couplé',
+    majorationTexte: 'Sans quitus CMU à jour, blocage de l’attestation de régularité sociale (CNAM)',
+    teleservice: 'e-cnps.ci / CNAM (CMU)',
+    source: 'Decret_CMU_Obligatoire_2025.txt',
+    periodicite: 'mensuelle',
+    jourDuMois: 10,
+    minEffectif: 1,
+    regimesApplicables: ['TOUS'],
   },
 ];
 
@@ -334,9 +478,9 @@ export const LEGAL_RULES: Rule[] = [
  */
 export class ObligationEngine {
   /**
-   * Date courante de référence système (septembre 2026 dans le contexte de l'application)
+   * Horloge de référence : `dateReference` (système réel par défaut, forçable en QA).
    */
-  public static REFERENCE_DATE: Date = new Date('2026-09-04T12:00:00Z');
+  public static REFERENCE_DATE: Date = getDateReference();
 
   /**
    * Normalise le libellé du régime fiscal pour la correspondance
@@ -399,9 +543,9 @@ export class ObligationEngine {
     quittancesPointerMap: Record<string, boolean> = {},
     customReferenceDate?: Date
   ): EngineOutput {
-    const refDate = customReferenceDate || this.REFERENCE_DATE;
-    const refYear = refDate.getFullYear(); // 2026
-    const refMonth = refDate.getMonth(); // 8 (septembre)
+    // AMENDEMENT #2 : horloge unique. Aucune date codée en dur ci-dessous.
+    const refDate = customReferenceDate || getDateReference();
+    const refYear = refDate.getFullYear();
 
     // Filtrer les règles applicables
     const applicableRules = LEGAL_RULES.filter((rule) => this.isRuleApplicable(rule, profile));
@@ -409,113 +553,39 @@ export class ObligationEngine {
     const instances: ObligationInstance[] = [];
 
     applicableRules.forEach((rule) => {
-      // Détermination de l'échéance selon la périodicité
-      let echeanceDate: Date;
-      let dateLabel: string;
-      let dateIso: string;
-
       if (rule.periodicite === 'mensuelle') {
-        const jour = rule.jourDuMois || 15;
-        // Déclaration du mois précédent M-1 échue le 15 ou 20 du mois en cours M (Août 2026 échu le 15 ou 20 Août 2026)
-        // En date du 4 septembre 2026 :
-        // L'échéance de la période d'août 2026 est soit :
-        // - Le 15 ou 20 août 2026 (pour les activités de juillet)
-        // - Le 15 ou 20 septembre 2026 (pour les activités d'août)
-        // Pour matérialiser les contrôles réels du calendrier DGI :
-        if (rule.id === 'RULE_TVA_MENSUELLE') {
-          // Échéance TVA période échue le 20 août 2026
-          echeanceDate = new Date(refYear, 7, 20); // 20 août 2026
-          dateLabel = '20 août 2026';
-          dateIso = '2026-08-20';
-        } else if (rule.id === 'RULE_CNPS_COTISATIONS_PERIODIQUES') {
-          // Échéance CNPS échue le 15 août 2026
-          echeanceDate = new Date(refYear, 7, 15); // 15 août 2026
-          dateLabel = '15 août 2026';
-          dateIso = '2026-08-15';
-        } else if (rule.id === 'RULE_ITS_SALAIRES') {
-          // Échéance ITS échue le 15 août 2026
-          echeanceDate = new Date(refYear, 7, 15);
-          dateLabel = '15 août 2026';
-          dateIso = '2026-08-15';
-        } else {
-          // Prochaine échéance mensuelle normale (15 septembre 2026)
-          echeanceDate = new Date(refYear, refMonth, jour);
-          const moisFr = [
-            'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
-            'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
-          ];
-          dateLabel = `${jour} ${moisFr[refMonth]} ${refYear}`;
-          dateIso = `${refYear}-${String(refMonth + 1).padStart(2, '0')}-${String(jour).padStart(2, '0')}`;
-        }
-      } else if (rule.periodicite === 'trimestrielle') {
-        // Tiers provisionnel BIC : 15 septembre 2026 (prochaine échéance imminente)
-        echeanceDate = new Date(refYear, 8, 15);
-        dateLabel = '15 septembre 2026';
-        dateIso = '2026-09-15';
-      } else if (rule.periodicite === 'annuelle') {
-        if (rule.id === 'RULE_DEPOT_ETATS_FINANCIERS' || rule.id === 'RULE_BENEFICIAIRES_EFFECTIFS') {
-          // Dépôt états financiers & Bénéficiaires effectifs : 30 mai 2026
-          echeanceDate = new Date(refYear, 4, 30); // 30 mai 2026
-          dateLabel = '30 mai 2026';
-          dateIso = '2026-05-30';
-        } else if (rule.id === 'RULE_PATENTE_DECLARATION_PAIEMENT') {
-          // Patente 2e terme : 15 juillet 2026
-          echeanceDate = new Date(refYear, 6, 15); // 15 juillet 2026
-          dateLabel = '15 juillet 2026';
-          dateIso = '2026-07-15';
-        } else {
-          echeanceDate = new Date(refYear, 11, 31);
-          dateLabel = `31 décembre ${refYear}`;
-          dateIso = `${refYear}-12-31`;
-        }
-      } else {
-        // Événementielle (délégués, registres, affiliation)
-        echeanceDate = new Date(refYear, 7, 31); // 31 août 2026
-        dateLabel = '31 août 2026';
-        dateIso = '2026-08-31';
+        // Occurrence échue + 2 prochaines : les 3 blocs (En retard / Mois en cours /
+        // Mois prochain) restent alimentés quelle que soit la position dans le mois.
+        const { past, next, following } = monthlyTriple(rule.jourDuMois || 15, refDate);
+        emitOccurrence(instances, rule, past, refDate, quittancesPointerMap);
+        emitOccurrence(instances, rule, next, refDate, quittancesPointerMap);
+        emitOccurrence(instances, rule, following, refDate, quittancesPointerMap);
+        return;
       }
-
-      // Calcul de la différence en jours
-      const diffMs = refDate.getTime() - echeanceDate.getTime();
-      const diffJours = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-      // Vérifier si pointée comme payée/validée dans le dossier
-      const isAlreadyPointed = quittancesPointerMap[rule.id] === true;
-
-      let statut: 'en_retard' | 'a_jour' | 'a_venir';
-      let joursRetard = 0;
-
-      if (isAlreadyPointed) {
-        statut = 'a_jour';
-      } else if (diffJours > 0) {
-        // Échéance passée sans quittance
-        statut = 'en_retard';
-        joursRetard = diffJours;
-      } else {
-        // Échéance future
-        statut = 'a_venir';
+      if (rule.periodicite === 'trimestrielle') {
+        const { past, next } = periodicPair(
+          rule.trimestreMois || [4, 6, 9],
+          rule.jourDuMois || 15,
+          refDate
+        );
+        emitOccurrence(instances, rule, past, refDate, quittancesPointerMap);
+        emitOccurrence(instances, rule, next, refDate, quittancesPointerMap);
+        return;
       }
-
-      instances.push({
-        ruleId: rule.id,
-        label: rule.label,
-        domaine: rule.domaine,
-        baseLegale: rule.baseLegale,
-        dateEcheance: dateLabel,
-        dateEcheanceIso: dateIso,
-        statut,
-        joursRetard,
-        majorationTexte: rule.majorationTexte,
-        teleservice: rule.teleservice,
-        periodicite: rule.echeance,
-        description: rule.conditions,
-      });
+      if (rule.periodicite === 'annuelle') {
+        const occ = monthlyDate(refYear, (rule.moisEcheance || 12) - 1, rule.jourDuMois || 15);
+        emitOccurrence(instances, rule, occ, refDate, quittancesPointerMap);
+        return;
+      }
+      // Événementiel (affiliation, accident, délégués, registres) : pas une échéance
+      // datée → exclu de la fenêtre d'affichage En retard / Mois en cours / Mois prochain.
     });
 
-    // Trier les obligations : En retard d'abord, puis à venir par date croissante
+    // Trier : En retard d'abord (plus sévère = plus de jours de retard), puis date croissante
     instances.sort((a, b) => {
       if (a.statut === 'en_retard' && b.statut !== 'en_retard') return -1;
       if (b.statut === 'en_retard' && a.statut !== 'en_retard') return 1;
+      if (a.statut === 'en_retard' && b.statut === 'en_retard') return b.joursRetard - a.joursRetard;
       return a.dateEcheanceIso.localeCompare(b.dateEcheanceIso);
     });
 
@@ -550,28 +620,43 @@ export class ObligationEngine {
   /**
    * Convertit une instance d'obligation du moteur vers l'interface UI Obligation
    */
-  public static instanceToObligation(inst: ObligationInstance): import('../types').Obligation {
-    const parts = inst.dateEcheance.split(' ');
-    const jour = parts[0] || '15';
-    const mois = (parts[1] || 'MOIS').toUpperCase();
+  public static instanceToObligation(
+    inst: ObligationInstance,
+    referenceDate?: Date
+  ): import('../types').Obligation {
+    // AMENDEMENT #2 §4 : aucun montant calculé — seule la sanction légale (texte) est exposée.
+    const parsed = parseIsoDate(inst.dateEcheanceIso);
+    const pill = parsed ? pillForDate(parsed) : { jour: '15', mois: '—' };
     const isRetard = inst.statut === 'en_retard';
+    const isPointed = inst.statut === 'a_jour';
+    const ref = referenceDate || getDateReference();
+    const daysUntil = parsed ? diffDays(ref, parsed) : 999;
+    const isImminent = !isRetard && !isPointed && daysUntil >= 0 && daysUntil <= 7;
 
     return {
-      id: inst.ruleId,
+      id: inst.key,
       titre: inst.label,
-      echeanceLabel: isRetard ? `Échéance dépassée le ${inst.dateEcheance}` : `Échéance le ${inst.dateEcheance}`,
+      echeanceLabel: isRetard
+        ? `Échéance dépassée le ${inst.dateEcheance}`
+        : `Échéance le ${inst.dateEcheance}`,
       dateIso: inst.dateEcheanceIso,
       echeanceDateIso: inst.dateEcheanceIso,
-      statut: isRetard ? 'en_retard' : 'a_venir',
-      tagLabel: isRetard ? `En retard (${inst.joursRetard}j)` : 'À venir',
-      tagClass: isRetard ? 'retard' : 'avenir',
-      montantEstime: inst.majorationTexte,
+      statut: isRetard ? 'en_retard' : isPointed ? 'accomplie' : isImminent ? 'imminente' : 'a_venir',
+      tagLabel: isRetard
+        ? `En retard (${inst.joursRetard}j)`
+        : isPointed
+        ? 'Accomplie'
+        : isImminent
+        ? 'Imminent'
+        : 'À venir',
+      tagClass: isRetard ? 'retard' : isPointed ? 'fait' : isImminent ? 'imminent' : 'avenir',
       domaine: inst.domaine === 'social' ? 'social' : inst.domaine === 'fiscal' ? 'fiscal' : 'administratif',
-      moisGroupe: `${mois} 2026`,
-      jour,
-      mois,
+      moisGroupe: parsed ? formatMonthLabel(parsed) : '',
+      jour: pill.jour,
+      mois: pill.mois,
       administration: inst.teleservice,
       baseLegale: inst.baseLegale,
+      periodicitePlateforme: inst.teleservice,
       penalitesDetail: inst.majorationTexte,
       description: inst.description,
     };

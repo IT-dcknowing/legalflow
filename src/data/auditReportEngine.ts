@@ -182,13 +182,14 @@ export function buildAuditReportData(
       statutLabel = 'En cours';
     }
 
-    const pen = ob.penaliteEstimee !== undefined
-      ? ob.penaliteEstimee
-      : (ob.montantNumerique ? Math.round(ob.montantNumerique * 0.1) : 25_000);
+    // AMENDEMENT #2 §4 : aucun montant calculé — seuls les montants saisis sont repris.
+    const pen = ob.penaliteEstimee !== undefined ? ob.penaliteEstimee : 0;
 
     const impact = isClos
       ? '0 FCFA (Régularisé avec quittance)'
-      : `${pen.toLocaleString('fr-FR')} FCFA (Majoration estimée)`;
+      : pen > 0
+      ? `${pen.toLocaleString('fr-FR')} FCFA (montant saisi par le cabinet)`
+      : 'Montant à saisir par le cabinet (simulateur « Simuler ce cas »)';
 
     return {
       numero: idx + 1,

@@ -59,13 +59,18 @@ export class ComplianceScoreEngine {
         enRetardCount++;
         domains[domKey].retards++;
         domains.audit.retards++;
-        const pen = ob.penaliteEstimee !== undefined ? ob.penaliteEstimee : (ob.montantNumerique ? Math.round(ob.montantNumerique * 0.1) : 30_000);
+        // AMENDEMENT #2 §4 : aucun montant calculé. Seuls les montants saisis
+        // (simulation du cabinet) comptent ; sinon l'exposition reste non chiffrée.
+        const pen = ob.penaliteEstimee !== undefined ? ob.penaliteEstimee : 0;
         expositionFinanciere += pen;
 
         recommandations.push({
           priorite: 'P1',
           action: `Régulariser l'obligation en retard : ${ob.titre}`,
-          impact: `Éviter majoration supplémentaire DGI/CNPS (${pen.toLocaleString('fr-FR')} FCFA)`,
+          impact:
+            pen > 0
+              ? `Limiter la majoration DGI/CNPS (${pen.toLocaleString('fr-FR')} FCFA saisis)`
+              : 'Chiffrer le coût réel via le simulateur (« Simuler ce cas »)',
         });
       } else if (ob.statut === 'accomplie') {
         accompliesCount++;

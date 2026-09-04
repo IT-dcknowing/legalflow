@@ -41,29 +41,15 @@ export const CostSimulationDrawer: React.FC<CostSimulationDrawerProps> = ({
       setDatePaiementPrevue(obligation.simulation.datePaiementPrevue || '');
       setRappelActif(obligation.simulation.rappelActif ?? true);
     } else {
-      // Pré-remplissage par défaut intelligent basé sur l'obligation
-      const defaultPrincipal = obligation.montantNumerique || 250000;
+      // AMENDEMENT #2 §4 : aucun montant pré-calculé. Une ligne « principal » vide
+      // à saisir + chips de suggestion (clic = saisie assistée, montants éditables).
       const defaultLines: CostSimulationLine[] = [
         {
           id: 'line-principal',
-          label: 'Montant principal estimé',
-          montant: defaultPrincipal,
+          label: 'Montant principal',
+          montant: 0,
         },
       ];
-
-      // Si l'obligation est en retard, pré-ajouter les lignes de majoration légale
-      if (obligation.statut === 'en_retard') {
-        defaultLines.push({
-          id: 'line-majoration',
-          label: 'Majoration légale (10 % - Art. 1083 CGI / Art. 30 CPS)',
-          montant: Math.round(defaultPrincipal * 0.1),
-        });
-        defaultLines.push({
-          id: 'line-interet',
-          label: 'Intérêt de retard (1 % / mois)',
-          montant: Math.round(defaultPrincipal * 0.01),
-        });
-      }
 
       setLines(defaultLines);
       // Date suggérée : dans 7 jours ou fin de mois
@@ -81,23 +67,23 @@ export const CostSimulationDrawer: React.FC<CostSimulationDrawerProps> = ({
 
   if (!isOpen || !obligation) return null;
 
-  // Calcul dynamique de la majoration suggérée (10% du principal)
+  // Calcul dynamique de la majoration suggérée (10% du principal SAISI, jamais inventé)
   const principalLine = lines.find((l) => l.label.toLowerCase().includes('principal'));
-  const currentPrincipal = principalLine ? principalLine.montant : 250000;
+  const currentPrincipal = principalLine ? principalLine.montant : 0;
 
   // Suggestions rapides prêtes à l'emploi basées sur les textes de l'obligation
   const suggestions = [
     {
       label: 'Montant principal',
-      suggestedMontant: currentPrincipal > 0 ? currentPrincipal : 250000,
+      suggestedMontant: currentPrincipal > 0 ? currentPrincipal : 0,
     },
     {
       label: 'Majoration légale (10 %)',
-      suggestedMontant: Math.round(currentPrincipal * 0.1) || 25000,
+      suggestedMontant: Math.round(currentPrincipal * 0.1) || 0,
     },
     {
       label: 'Intérêt de retard (1 % / mois)',
-      suggestedMontant: Math.round(currentPrincipal * 0.01) || 2500,
+      suggestedMontant: Math.round(currentPrincipal * 0.01) || 0,
     },
     {
       label: 'Pénalité pour défaut de déclaration',
@@ -301,7 +287,7 @@ export const CostSimulationDrawer: React.FC<CostSimulationDrawerProps> = ({
                 <p className="m-0">Aucun poste de coût ajouté.</p>
                 <button
                   type="button"
-                  onClick={() => handleAddLine('Montant principal', 250000)}
+                  onClick={() => handleAddLine('Montant principal', 0)}
                   className="text-xs font-bold text-[#4F46A0] hover:underline"
                 >
                   Ajouter le montant principal
