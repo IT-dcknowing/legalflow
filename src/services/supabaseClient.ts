@@ -19,6 +19,7 @@ export type DbRole = 'super_admin' | 'gestionnaire' | 'entreprise';
 export interface DbProfile {
   id: string;
   role: DbRole;
+  statut: string | null;
   nom_complet: string | null;
   email: string | null;
   cabinet_id: string | null;
@@ -41,7 +42,7 @@ export async function fetchMyProfile(userId: string): Promise<DbProfile | null> 
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, role, nom_complet, email, cabinet_id, entreprise_id')
+    .select('id, role, statut, nom_complet, email, cabinet_id, entreprise_id')
     .eq('id', userId)
     .maybeSingle();
   if (error || !data) return null;

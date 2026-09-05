@@ -1,6 +1,13 @@
 export type UserRole = 'super_admin' | 'gestionnaire' | 'utilisateur';
 
 export type PageId =
+  // Pages publiques (hors session)
+  | 'landing'
+  | 'login'
+  | 'inscription'
+  // Pages blocantes (session non active)
+  | 'en_attente'
+  | 'suspendu'
   | 'accueil'
   | 'dashboard'
   | 'echeancier'
@@ -16,6 +23,8 @@ export type PageId =
   | 'super_admin_notifications'
   | 'super_admin_audits'
   | 'super_admin_rappels'
+  | 'super_admin_journal'
+  | 'super_admin_cabinets_attente'
   | 'admin_console'
   | 'admin_entreprises'
   | 'admin_pipeline'
@@ -24,7 +33,10 @@ export type PageId =
   | 'admin_schema'
   // Gestionnaire Pages (Niveau 2)
   | 'gestionnaire_dashboard'
-  | 'mes_entreprises';
+  | 'gestionnaire_journal'
+  | 'mes_entreprises'
+  // Entreprise (Niveau 3)
+  | 'entreprise_historique';
 
 export interface AppUser {
   id: string;

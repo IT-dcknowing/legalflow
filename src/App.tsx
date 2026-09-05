@@ -62,6 +62,11 @@ import { ArrowLeft } from 'lucide-react';
 
 // Pages
 import { AccueilPage } from './pages/AccueilPage';
+import { LandingPage } from './pages/LandingPage';
+import { InscriptionPage } from './pages/InscriptionPage';
+import { completePendingInscription } from './services/inscriptionService';
+import { EnAttentePage } from './pages/EnAttentePage';
+import { SuspenduPage } from './pages/SuspenduPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EcheancierPage } from './pages/EcheancierPage';
 import { OpportunitesPage } from './pages/OpportunitesPage';
@@ -97,6 +102,20 @@ function entityToProfile(ent: CompanyEntity): CompanyProfile {
   };
 }
 
+/** Page d'entrée par rôle (compte actif). */
+export function getDefaultPageForRole(role: string): PageId {
+  if (role === 'super_admin') return 'super_admin';
+  if (role === 'gestionnaire') return 'gestionnaire_dashboard';
+  return 'dashboard';
+}
+
+/** Routage après login : rôle × statut (PEN-015). */
+export function routeAfterLogin(role: string, statut: string): PageId {
+  if (statut === 'en_attente') return 'en_attente';
+  if (statut === 'suspendu') return 'suspendu';
+  return getDefaultPageForRole(role);
+}
+
 function dbEntrepriseToEntity(r: DbEntreprise): CompanyEntity {
   return {
     id: r.id,
@@ -121,7 +140,7 @@ function dbEntrepriseToEntity(r: DbEntreprise): CompanyEntity {
 }
 
 export function App() {
-  const [activePage, setActivePage] = useState<PageId>('gestionnaire_dashboard');
+  const [activePage, setActivePage] = useState<PageId>('landing');
   const [currentUser, setCurrentUser] = useState<AppUser>(mockUsers.gestionnaire);
   const [currentRole, setCurrentRole] = useState<UserRole>('gestionnaire');
   const [companies, setCompanies] = useState<CompanyEntity[]>(initialCompaniesEntities);
@@ -279,11 +298,16 @@ export function App() {
       ? Math.round(((obligations.length - groupesGlobaux.totalLate) / obligations.length) * 100)
       : 100;
 
-  // ---- Session réelle : profil, routage par niveau, données scopées RLS ----
+  // ---- Session réelle : profil, routage par niveau + statut, données scopées RLS ----
   const enterRealSession = async (userId: string, email: string) => {
     if (sessionLoadedFor.current === userId) return;
     sessionLoadedFor.current = userId;
-    const profile = await fetchMyProfile(userId);
+    let profile = await fetchMyProfile(userId);
+    if (!profile) {
+      // Inscription finalisée en différé (compte confirmé après coup).
+      const completed = await completePendingInscription(userId);
+      if (completed) profile = await fetchMyProfile(userId);
+    }
     setAuthUserId(userId);
     setProfileChecked(true);
     setDbProfile(profile);
@@ -295,18 +319,20 @@ export function App() {
       role: profile.role === 'super_admin' ? 'super_admin' : profile.role === 'gestionnaire' ? 'gestionnaire' : 'utilisateur',
     };
     setCurrentUser(realUser);
+    // PEN-015 : routage conditionnel rôle × statut (actif → dashboard, sinon page blocante).
+    const home = routeAfterLogin(profile.role, profile.statut || 'actif');
     if (profile.role === 'super_admin') {
       setCurrentRole('super_admin');
-      setActivePage('super_admin');
     } else if (profile.role === 'gestionnaire') {
       setCurrentRole('gestionnaire');
       setIsGestionnaireInCompanyMode(false);
-      setActivePage('gestionnaire_dashboard');
     } else {
       setCurrentRole('utilisateur');
       setIsGestionnaireInCompanyMode(false);
-      setActivePage('dashboard');
     }
+    setActivePage(home);
+    await logConnexion(profile.email || email);
+    if (home === 'en_attente' || home === 'suspendu') return; // compte non actif : pas de données
     // Données scopées : RLS ne renvoie que le périmètre du niveau.
     const rows = await fetchVisibleEntreprises();
     if (rows.length > 0) {
@@ -320,7 +346,6 @@ export function App() {
       setProfile(entityToProfile(target));
     }
     await loadChatHistory(userId);
-    await logConnexion(profile.email || email);
   };
 
   React.useEffect(() => {
@@ -348,6 +373,7 @@ export function App() {
         setProfileChecked(false);
         chatConvId.current = null;
         setChatInitial(null);
+        setActivePage('landing');
       }
     });
     return () => {
@@ -357,16 +383,45 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // PEN-015 : erreur NEUTRE (pas d'énumération : on ne distingue pas
+  // email inexistant vs mot de passe faux).
+  const NEUTRAL_AUTH_ERROR =
+    'Identifiants incorrects. Vérifiez votre saisie ou réinitialisez votre mot de passe.';
+
   const handleLogin = async (email: string, password: string): Promise<string | null> => {
     if (!supabase) return 'Backend non configuré.';
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      if (error.message.includes('Invalid login credentials')) {
-        return 'Email ou mot de passe incorrect.';
-      }
-      return 'Connexion impossible. Réessayez.';
+      return NEUTRAL_AUTH_ERROR;
     }
     return null;
+  };
+
+  const handleResetPassword = async (email: string): Promise<void> => {
+    if (!supabase) return;
+    try {
+      await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo:
+          typeof window !== 'undefined' ? window.location.origin + '/login' : undefined,
+      });
+    } catch {
+      /* neutre dans tous les cas : on ne révèle rien */
+    }
+  };
+
+  // Après inscription avec session immédiate : recharge le profil fraîchement créé.
+  const handleInscriptionComplete = async () => {
+    sessionLoadedFor.current = null;
+    if (!supabase) {
+      setActivePage('login');
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user) {
+      await enterRealSession(data.session.user.id, data.session.user.email || '');
+    } else {
+      setActivePage('login');
+    }
   };
 
   const handleLogout = async () => {
@@ -441,6 +496,11 @@ export function App() {
 
   // Page titles map
   const pageTitles: Record<PageId, string> = {
+    landing: 'Accueil',
+    login: 'Connexion',
+    inscription: 'Créer mon compte',
+    en_attente: 'Compte en cours d’activation',
+    suspendu: 'Compte suspendu',
     accueil: 'Accueil',
     dashboard: currentRole === 'gestionnaire' && isGestionnaireInCompanyMode ? `Dashboard — ${profile.nom}` : 'Tableau de bord',
     echeancier: 'Échéancier',
@@ -449,13 +509,17 @@ export function App() {
     veille: 'Veille réglementaire',
     documents: 'Documents',
     profil: currentRole === 'gestionnaire' && isGestionnaireInCompanyMode ? "Fiche de l'entreprise" : 'Profil entreprise',
+    entreprise_historique: 'Mon historique',
     super_admin: 'Dashboard Global — Super Admin HQ',
     super_admin_entreprises: 'Entreprises Référencées',
     super_admin_pipeline: 'Pipeline de Veille Réglementaire (J0→J+5)',
     super_admin_notifications: 'Diffusion Notifications',
     super_admin_audits: 'Audits Transversaux',
     super_admin_rappels: 'Séquences de Rappels (J+3, J+7, J+15)',
+    super_admin_journal: 'Journal d’audit',
+    super_admin_cabinets_attente: 'Cabinets en attente',
     gestionnaire_dashboard: 'Vue d’ensemble Portefeuille',
+    gestionnaire_journal: 'Journal mes clients',
     mes_entreprises: 'Mes Entreprises',
     admin_console: 'Super Admin HQ',
     admin_entreprises: 'Gestion Entreprises',
@@ -643,7 +707,17 @@ export function App() {
     }
   };
 
-  // Portail : sans session réelle → LoginPage (auth Supabase uniquement, PEN-010).
+  // Garde : un compte ACTIF ne doit jamais voir les pages blocantes (PEN-017 §6).
+  React.useEffect(() => {
+    if (!useRealAuth || !authUserId || !dbProfile) return;
+    if ((dbProfile.statut || 'actif') === 'actif' &&
+        (activePage === 'en_attente' || activePage === 'suspendu')) {
+      setActivePage(getDefaultPageForRole(dbProfile.role));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, authUserId, dbProfile]);
+
+  // Portail public : sans session → landing (défaut), login ou inscription.
   if (useRealAuth && !authUserId) {
     if (!authReady) {
       return (
@@ -652,7 +726,20 @@ export function App() {
         </div>
       );
     }
-    return <LoginPage onLogin={handleLogin} />;
+    if (activePage === 'landing') {
+      return <LandingPage onNavigate={handleNavigate} />;
+    }
+    if (activePage === 'inscription') {
+      return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} />;
+    }
+    return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} signupHint />;
+  }
+  // Pages blocantes : compte non actif, sans Topbar ni Sidebar (PEN-017).
+  if (useRealAuth && authUserId && activePage === 'en_attente') {
+    return <EnAttentePage onLogout={handleLogout} />;
+  }
+  if (useRealAuth && authUserId && activePage === 'suspendu') {
+    return <SuspenduPage onLogout={handleLogout} />;
   }
   if (useRealAuth && authUserId && profileChecked && !dbProfile) {
     return (
