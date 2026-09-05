@@ -12,6 +12,7 @@ import {
   AppUser,
   CompanyEntity,
   CostSimulation,
+  ChatMessage,
 } from './types';
 import {
   initialCompanyProfile,
@@ -22,6 +23,17 @@ import {
   initialFlashs,
 } from './data/mockData';
 import { mockUsers, initialCompaniesEntities, checkIsProfileComplete } from './data/rolesData';
+import {
+  supabase,
+  isSupabaseConfigured,
+  fetchMyProfile,
+  fetchVisibleEntreprises,
+  logEvent,
+  sanitizeFileName,
+  type DbProfile,
+  type DbEntreprise,
+} from './services/supabaseClient';
+import { LoginPage } from './components/LoginPage';
 import { ObligationEngine } from './services/obligationEngine';
 import {
   diffDays,
@@ -81,6 +93,29 @@ function entityToProfile(ent: CompanyEntity): CompanyProfile {
     ncc: ent.numeroCc || '',
     centreImpots: ent.centreImpots || 'CDI Plateau',
     profilComplet: ent.profilComplet,
+  };
+}
+
+function dbEntrepriseToEntity(r: DbEntreprise): CompanyEntity {
+  return {
+    id: r.id,
+    name: r.raison_sociale,
+    raisonSociale: r.raison_sociale,
+    formeJuridique: r.forme_juridique || '',
+    secteurActivite: r.secteur || '',
+    regimeFiscal: r.regime_fiscal || '',
+    caEstime: Number(r.ca_estime) || 0,
+    effectif: r.effectif || 0,
+    adhesionCga: false,
+    cgaNom: '',
+    numeroCnps: '',
+    numeroRccm: r.rccm || '',
+    numeroCc: '',
+    secteurGeographique: '',
+    profilComplet: r.profil_complet,
+    createdBy: '',
+    createdAt: '',
+    centreImpots: 'CDI —',
   };
 }
 
@@ -151,6 +186,18 @@ export function App() {
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isLaravelViewerOpen, setIsLaravelViewerOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(3);
+
+  // ---- Auth réelle Supabase (null = mode démo sans backend) ----
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [dbProfile, setDbProfile] = useState<DbProfile | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [profileChecked, setProfileChecked] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const sessionLoadedFor = React.useRef<string | null>(null);
+  const useRealAuth = isSupabaseConfigured() && !demoMode;
+
+  const uuidOrUndef = (v?: string | null): string | undefined =>
+    v && /^[0-9a-f-]{36}$/i.test(v) ? v : undefined;
 
   // Modals pour la gestion multi-niveaux et profil incomplet
   const [isCompleteProfileOpen, setIsCompleteProfileOpen] = useState(false);
@@ -231,6 +278,165 @@ export function App() {
     obligations.length > 0
       ? Math.round(((obligations.length - groupesGlobaux.totalLate) / obligations.length) * 100)
       : 100;
+
+  // ---- Session réelle : profil, routage par niveau, données scopées RLS ----
+  const enterRealSession = async (userId: string, email: string) => {
+    if (sessionLoadedFor.current === userId) return;
+    sessionLoadedFor.current = userId;
+    const profile = await fetchMyProfile(userId);
+    setAuthUserId(userId);
+    setProfileChecked(true);
+    setDbProfile(profile);
+    if (!profile) return;
+    const realUser: AppUser = {
+      id: userId,
+      email: profile.email || email,
+      fullName: profile.nom_complet || email,
+      role: profile.role === 'super_admin' ? 'super_admin' : profile.role === 'gestionnaire' ? 'gestionnaire' : 'utilisateur',
+    };
+    setCurrentUser(realUser);
+    if (profile.role === 'super_admin') {
+      setCurrentRole('super_admin');
+      setActivePage('super_admin');
+    } else if (profile.role === 'gestionnaire') {
+      setCurrentRole('gestionnaire');
+      setIsGestionnaireInCompanyMode(false);
+      setActivePage('gestionnaire_dashboard');
+    } else {
+      setCurrentRole('utilisateur');
+      setIsGestionnaireInCompanyMode(false);
+      setActivePage('dashboard');
+    }
+    // Données scopées : RLS ne renvoie que le périmètre du niveau.
+    const rows = await fetchVisibleEntreprises();
+    if (rows.length > 0) {
+      const entities = rows.map(dbEntrepriseToEntity);
+      setCompanies(entities);
+      const target =
+        profile.role === 'entreprise'
+          ? entities.find((e) => e.id === profile.entreprise_id) || entities[0]
+          : entities[0];
+      setActiveCompanyId(target.id);
+      setProfile(entityToProfile(target));
+    }
+    await loadChatHistory(userId);
+    await logEvent('connexion', undefined, undefined, { email: profile.email || email });
+  };
+
+  React.useEffect(() => {
+    if (!isSupabaseConfigured() || demoMode) {
+      setAuthReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase!.auth.getSession();
+      if (cancelled) return;
+      if (data.session?.user) {
+        await enterRealSession(data.session.user.id, data.session.user.email || '');
+      }
+      setAuthReady(true);
+    })();
+    const { data: sub } = supabase!.auth.onAuthStateChange(async (event, session) => {
+      if (cancelled) return;
+      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+        await enterRealSession(session.user.id, session.user.email || '');
+      } else if (event === 'SIGNED_OUT') {
+        sessionLoadedFor.current = null;
+        setAuthUserId(null);
+        setDbProfile(null);
+        setProfileChecked(false);
+        chatConvId.current = null;
+        setChatInitial(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoMode]);
+
+  const handleLogin = async (email: string, password: string): Promise<string | null> => {
+    if (!supabase) return 'Backend non configuré.';
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (error.message.includes('Invalid login credentials')) {
+        return 'Email ou mot de passe incorrect.';
+      }
+      return 'Connexion impossible. Réessayez.';
+    }
+    return null;
+  };
+
+  const handleLogout = async () => {
+    if (chatSaveTimer.current) clearTimeout(chatSaveTimer.current);
+    chatConvId.current = null;
+    setChatInitial(null);
+    sessionLoadedFor.current = null;
+    if (supabase) await supabase.auth.signOut();
+    setAuthUserId(null);
+    setDbProfile(null);
+    setProfileChecked(false);
+  };
+
+  // ---- Historique chatbot persisté (chatbot_conversations) ----
+  const chatConvId = React.useRef<string | null>(null);
+  const chatSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [chatInitial, setChatInitial] = useState<ChatMessage[] | null>(null);
+
+  const loadChatHistory = async (userId: string) => {
+    chatConvId.current = null;
+    setChatInitial(null);
+    if (!supabase) return;
+    const { data } = await supabase
+      .from('chatbot_conversations')
+      .select('id, messages')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const stored = (data as any)?.messages;
+    if (data && Array.isArray(stored) && stored.length > 0) {
+      chatConvId.current = (data as any).id;
+      setChatInitial(
+        stored.map((m: any, i: number) => ({
+          id: `hist-${i}`,
+          sender: m.role === 'user' ? 'user' : 'bot',
+          text: m.contenu || '',
+          timestamp: typeof m.ts === 'string' ? m.ts.slice(11, 16) : '',
+        }))
+      );
+    }
+  };
+
+  const handleChatMessagesChange = (msgs: ChatMessage[]) => {
+    if (!supabase || !authUserId) return;
+    if (chatSaveTimer.current) clearTimeout(chatSaveTimer.current);
+    const uid = authUserId;
+    chatSaveTimer.current = setTimeout(async () => {
+      const stored = msgs.map((m) => ({
+        role: m.sender,
+        contenu: m.text,
+        ts: new Date().toISOString(),
+      }));
+      const firstUser = msgs.find((m) => m.sender === 'user');
+      const titre = (firstUser ? firstUser.text : 'Conversation').slice(0, 60);
+      if (chatConvId.current) {
+        await supabase!
+          .from('chatbot_conversations')
+          .update({ messages: stored, titre, updated_at: new Date().toISOString() })
+          .eq('id', chatConvId.current);
+      } else {
+        const { data } = await supabase!
+          .from('chatbot_conversations')
+          .insert({ user_id: uid, titre, messages: stored })
+          .select('id')
+          .maybeSingle();
+        if (data) chatConvId.current = (data as any).id;
+      }
+    }, 800);
+  };
 
   // Page titles map
   const pageTitles: Record<PageId, string> = {
@@ -362,20 +568,36 @@ export function App() {
       })
     );
     setCompanyTargetForManager(null);
+    void logEvent('profil_complete', 'entreprise', uuidOrUndef(activeCompanyId), {});
   };
 
-  // Pointer une quittance : l'occurrence passe soldée et disparaît de « En retard »
-  // dans l'échéancier ET le dashboard en même temps (critère 4).
-  const handleConfirmObligation = (
+  // Pointer une quittance : upload bucket `preuves` + ligne journal + bascule locale.
+  const handleConfirmObligation = async (
     obligationId: string,
     quittanceRef: string,
     declarationDate: string,
-    fileName?: string
+    fileName?: string,
+    file?: File | null
   ) => {
+    let storedPath = fileName ? `/uploads/${fileName}` : undefined;
+    const entId = uuidOrUndef(activeCompanyId) || uuidOrUndef(dbProfile?.entreprise_id);
+    if (file && supabase && authUserId && entId) {
+      const safe = sanitizeFileName(file.name || fileName || 'quittance.pdf');
+      const path = `${entId}/${obligationId}/${safe}`;
+      const { error: upErr } = await supabase.storage.from('preuves').upload(path, file, {
+        upsert: true,
+      });
+      if (!upErr) storedPath = path;
+    }
     setQuittances((prev) => ({
       ...prev,
-      [obligationId]: { ref: quittanceRef, date: declarationDate, file: fileName },
+      [obligationId]: { ref: quittanceRef, date: declarationDate, file: storedPath },
     }));
+    await logEvent('quittance_pointee', 'echeance', entId, {
+      obligation: obligationId,
+      ref: quittanceRef,
+      fichier: storedPath,
+    });
 
     // If a document was attached, add to documents list
     if (fileName) {
@@ -410,6 +632,7 @@ export function App() {
     setReportModalState(state);
     setReportModalProfile(targetProfile || profile);
     setIsReportPdfModalOpen(true);
+    logEvent('rapport_genere', 'rapport', uuidOrUndef(activeCompanyId), { etat: state });
   };
 
   // Ouverture directe de certification pour une entreprise (depuis le tableau de bord gestionnaire)
@@ -445,6 +668,42 @@ export function App() {
       setActivePage(page as PageId);
     }
   };
+
+  // Portail : sans session réelle → LoginPage (sauf chargement ou mode démo).
+  if (useRealAuth && !authUserId) {
+    if (!authReady) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[#F6F6FB]">
+          <div className="text-sm font-bold text-[#4F46A0]">Chargement de la session…</div>
+        </div>
+      );
+    }
+    return (
+      <LoginPage
+        onLogin={handleLogin}
+        demoAvailable
+        onDemo={() => setDemoMode(true)}
+      />
+    );
+  }
+  if (useRealAuth && authUserId && profileChecked && !dbProfile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F6F6FB] p-4">
+        <div className="bg-white border border-[#E5E5F0] rounded-2xl p-6 max-w-[400px] text-center space-y-3">
+          <div className="text-sm font-black text-[#171A2E]">Compte sans profil</div>
+          <p className="text-xs text-[#6B6F85]">
+            Votre compte n'est rattaché à aucun niveau. Contactez Legal Flow HQ ou votre cabinet.
+          </p>
+          <button
+            onClick={handleLogout}
+            className="text-xs font-bold text-[#4F46A0] hover:underline cursor-pointer"
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#FDFDFE] text-[#20263A] font-sans antialiased selection:bg-[#EDEBF9] selection:text-[#3D3680]">
@@ -488,6 +747,7 @@ export function App() {
             pageTitle={pageTitles[activePage] || 'Legal Flow'}
             dateReference={dateReference}
             onQaDateChange={() => setDateTick((t) => t + 1)}
+            onLogout={useRealAuth && authUserId ? handleLogout : undefined}
             onOpenAssistant={() => setIsAssistantOpen(true)}
             onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
             onNavigateToVeille={() => {
@@ -688,6 +948,10 @@ export function App() {
               obligations={obligations}
               opportunities={opportunities}
               flashs={flashs}
+              key={authUserId || 'demo'}
+              userId={authUserId}
+              initialMessages={chatInitial}
+              onMessagesChange={handleChatMessagesChange}
             />
           </div>
         )}

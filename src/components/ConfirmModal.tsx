@@ -5,7 +5,7 @@ interface ConfirmModalProps {
   isOpen: boolean;
   obligation: Obligation | null;
   onClose: () => void;
-  onConfirm: (obligationId: string, quittanceRef: string, date: string, fileName?: string) => void;
+  onConfirm: (obligationId: string, quittanceRef: string, date: string, fileName?: string, file?: File | null) => void;
 }
 
 export const ConfirmModal: React.FC<ConfirmModalProps> = ({
@@ -17,12 +17,14 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   const [quittanceRef, setQuittanceRef] = useState('');
   const [declarationDate, setDeclarationDate] = useState(new Date().toISOString().split('T')[0]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fileObj, setFileObj] = useState<File | null>(null);
 
   if (!isOpen || !obligation) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFileName(e.target.files[0].name);
+      setFileObj(e.target.files[0]);
     }
   };
 
@@ -31,10 +33,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
       obligation.id,
       withRef && quittanceRef ? quittanceRef : `QUITTANCE-${Date.now().toString().slice(-6)}`,
       declarationDate,
-      fileName || undefined
+      fileName || undefined,
+      fileObj
     );
     setQuittanceRef('');
     setFileName(null);
+    setFileObj(null);
     onClose();
   };
 

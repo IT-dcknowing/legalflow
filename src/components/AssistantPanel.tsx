@@ -38,6 +38,10 @@ interface AssistantPanelProps {
   obligations: Obligation[];
   opportunities: OpportunityItem[];
   flashs: FlashVeille[];
+  // Persistance Supabase (optionnelle) : l'historique est rechargé après reconnexion.
+  userId?: string | null;
+  initialMessages?: ChatMessage[] | null;
+  onMessagesChange?: (messages: ChatMessage[]) => void;
 }
 
 // Composants de rendu Markdown personnalisés (support GFM, tableaux, listes et typographie)
@@ -142,8 +146,12 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
   obligations,
   opportunities,
   flashs,
+  userId,
+  initialMessages,
+  onMessagesChange,
 }) => {
   const { playSentSound, playResponseSound } = useSoundEffects();
+  const hydratedRef = useRef(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -191,6 +199,30 @@ Posez-moi vos questions sur vos obligations, calculs de cotisations, vos démarc
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
+
+  // Hydratation depuis l'historique Supabase (une fois par utilisateur).
+  const skipNextPersistRef = useRef(false);
+  useEffect(() => {
+    if (initialMessages && initialMessages.length > 0 && !hydratedRef.current) {
+      hydratedRef.current = true;
+      skipNextPersistRef.current = true;
+      setMessages(initialMessages);
+    }
+  }, [initialMessages]);
+
+  useEffect(() => {
+    hydratedRef.current = false;
+  }, [userId]);
+
+  // Remontée des messages pour persistance (App débounced vers chatbot_conversations).
+  useEffect(() => {
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+    onMessagesChange?.(messages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   const toggleSources = (msgId: string) => {
     setExpandedSourcesMessageId((prev) => (prev === msgId ? null : msgId));

@@ -38,3 +38,6 @@ Pour avancer une tâche : cocher la case et déplacer la ligne dans la bonne sec
   (En retard / Mois en cours / Mois prochain + Historique), dashboard vitrine top-3,
   zéro calcul de pénalités. Vérifié (lint + build + script) et poussé.
 - [x] **LF-14** — Système de tâches markdown local (ce fichier) + MCP `notion` désactivé.
+- [x] **LF-15** — Connexion & utilisateurs réels (Supabase) : login email/mot de passe,
+  3 comptes (super_admin / gestionnaire / entreprise), routage par rôle, données
+  scopées RLS, chat persisté, journal des événements, preuves vers bucket `preuves`.

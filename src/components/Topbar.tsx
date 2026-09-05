@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Menu } from 'lucide-react';
+import { Bell, MessageSquare, Menu, LogOut } from 'lucide-react';
 import { PageId, UserRole, AppUser } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
 import { RoleSwitcher } from './RoleSwitcher';
@@ -14,6 +14,7 @@ interface TopbarProps {
   pageTitle: string;
   dateReference: Date;
   onQaDateChange?: () => void;
+  onLogout?: () => void;
   onOpenAssistant: () => void;
   onNavigateToVeille: () => void;
   onToggleMobileMenu?: () => void;
@@ -28,6 +29,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   pageTitle,
   dateReference,
   onQaDateChange,
+  onLogout,
   onOpenAssistant,
   onNavigateToVeille,
   onToggleMobileMenu,
@@ -225,6 +227,19 @@ export const Topbar: React.FC<TopbarProps> = ({
             </span>
           )}
         </div>
+
+        {/* Déconnexion (session réelle) */}
+        {onLogout && (
+          <button
+            id="btnLogout"
+            onClick={onLogout}
+            aria-label="Déconnexion"
+            title="Déconnexion"
+            className="w-[36px] h-[36px] rounded-[8px] border border-[#E5E5F0] bg-white flex items-center justify-center hover:bg-[#F6F6FB] transition-colors cursor-pointer"
+          >
+            <LogOut className="w-[17px] h-[17px] text-[#20263A]" />
+          </button>
+        )}
 
         {/* User avatar */}
         <div className="w-[30px] h-[30px] rounded-full bg-[#D9DAF0] flex items-center justify-center font-bold text-[12px] text-[#3D3680]">
