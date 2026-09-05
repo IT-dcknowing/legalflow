@@ -21,6 +21,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, 
   // PEN-015 : mode reset (message neutre dans tous les cas, pas d'énumération).
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  // PEN-031 UI-002 : erreur immédiate sous l'input dès que le format est invalide.
+  const [emailTouched, setEmailTouched] = useState(false);
+  const emailInvalid = emailTouched && email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,9 +88,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, 
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  onBlur={() => setEmailTouched(true)}
                   placeholder="vous@entreprise.ci"
-                  className="w-full border border-[#E5E5F0] rounded-xl px-3.5 py-2.5 text-sm text-[#171A2E] placeholder-[#8C90A4] focus:outline-none focus:border-[#4F46A0] transition-colors"
+                  aria-invalid={emailInvalid}
+                  className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-[#171A2E] placeholder-[#8C90A4] focus:outline-none transition-colors ${
+                    emailInvalid
+                      ? 'border-[#C4432B] focus:border-[#C4432B] bg-[#FEF2F2]'
+                      : 'border-[#E5E5F0] focus:border-[#4F46A0]'
+                  }`}
                 />
+                {emailInvalid && (
+                  <p className="text-[11px] font-bold text-[#C4432B] mt-1.5 mb-0">
+                    Format d’email invalide (ex : vous@entreprise.ci).
+                  </p>
+                )}
               </div>
 
               {error && (
@@ -134,9 +148,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, 
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setEmailTouched(true)}
                 placeholder="vous@entreprise.ci"
-                className="w-full border border-[#E5E5F0] rounded-xl px-3.5 py-2.5 text-sm text-[#171A2E] placeholder-[#8C90A4] focus:outline-none focus:border-[#4F46A0] transition-colors"
+                aria-invalid={emailInvalid}
+                className={`w-full border rounded-xl px-3.5 py-2.5 text-sm text-[#171A2E] placeholder-[#8C90A4] focus:outline-none transition-colors ${
+                  emailInvalid
+                    ? 'border-[#C4432B] focus:border-[#C4432B] bg-[#FEF2F2]'
+                    : 'border-[#E5E5F0] focus:border-[#4F46A0]'
+                }`}
               />
+              {emailInvalid && (
+                <p className="text-[11px] font-bold text-[#C4432B] mt-1.5 mb-0">
+                  Format d’email invalide (ex : vous@entreprise.ci).
+                </p>
+              )}
             </div>
 
             <div>

@@ -7,7 +7,10 @@ import {
 } from 'lucide-react';
 import { Obligation, CostSimulation } from '../types';
 import { ObligationCard } from '../components/ObligationCard';
-import { CostSimulationDrawer } from '../components/CostSimulationDrawer';
+// PEN-027 : drawer lourd en chunk séparé (code splitting).
+const CostSimulationDrawer = React.lazy(() =>
+  import('../components/CostSimulationDrawer').then((m) => ({ default: m.CostSimulationDrawer }))
+);
 import { groupObligations } from '../services/echeancier';
 
 interface EcheancierPageProps {
@@ -321,16 +324,18 @@ export const EcheancierPage: React.FC<EcheancierPageProps> = ({
       )}
 
       {/* 4. Drawer latéral de Simulation de coût réel */}
-      <CostSimulationDrawer
-        isOpen={isSimulatorDrawerOpen}
-        obligation={simulatingObligation}
-        onClose={() => {
-          setIsSimulatorDrawerOpen(false);
-          setSimulatingObligation(null);
-        }}
-        onSaveSimulation={handleSaveSim}
-        onDeleteSimulation={handleDeleteSim}
-      />
+      <React.Suspense fallback={null}>
+        <CostSimulationDrawer
+          isOpen={isSimulatorDrawerOpen}
+          obligation={simulatingObligation}
+          onClose={() => {
+            setIsSimulatorDrawerOpen(false);
+            setSimulatingObligation(null);
+          }}
+          onSaveSimulation={handleSaveSim}
+          onDeleteSimulation={handleDeleteSim}
+        />
+      </React.Suspense>
     </div>
   );
 };

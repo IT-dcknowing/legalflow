@@ -34,6 +34,8 @@ import {
   type DbEntreprise,
 } from './services/supabaseClient';
 import { LoginPage } from './components/LoginPage';
+import { Loader } from './components/Loader';
+import { entityToProfile, dbEntrepriseToEntity } from './utils/transformers';
 import { logConnexion, logDeconnexion } from './services/journalEvents';
 import { ObligationEngine } from './services/obligationEngine';
 import {
@@ -52,12 +54,17 @@ import { AssistantPanel } from './components/AssistantPanel';
 import { ConfirmModal } from './components/ConfirmModal';
 import { AddDeadlineModal } from './components/AddDeadlineModal';
 import { FicheReaderModal } from './components/FicheReaderModal';
-import { EngineSimulatorModal } from './components/EngineSimulatorModal';
+// PEN-027 : modales lourdes en chunks séparés (code splitting).
+const EngineSimulatorModal = React.lazy(() =>
+  import('./components/EngineSimulatorModal').then((m) => ({ default: m.EngineSimulatorModal }))
+);
+const ReportPdfModal = React.lazy(() =>
+  import('./components/ReportPdfModal').then((m) => ({ default: m.ReportPdfModal }))
+);
 import { LaravelCodeViewerModal } from './components/LaravelCodeViewerModal';
 import { CompleteProfileModal } from './components/CompleteProfileModal';
 import { AddCompanyModal } from './components/AddCompanyModal';
 import { ConfirmEnterCompanyModal } from './components/ConfirmEnterCompanyModal';
-import { ReportPdfModal } from './components/ReportPdfModal';
 import { ArrowLeft } from 'lucide-react';
 
 // Pages
@@ -81,30 +88,6 @@ import { SuperAdminPage } from './pages/SuperAdminPage';
 import { GestionnaireDashboardPage } from './pages/GestionnaireDashboardPage';
 import { GestionnaireEntreprisesPage } from './pages/GestionnaireEntreprisesPage';
 
-function entityToProfile(ent: CompanyEntity): CompanyProfile {
-  return {
-    ...initialCompanyProfile,
-    id: ent.id,
-    nom: ent.name,
-    raisonSociale: ent.raisonSociale || ent.name,
-    formeJuridique: ent.formeJuridique,
-    secteurActivite: ent.secteurActivite,
-    secteur: ent.secteurActivite,
-    regimeFiscal: ent.regimeFiscal,
-    chiffreAffairesEstime: ent.caEstime,
-    effectif: `${ent.effectif || 0} salariés`,
-    effectifSalaries: ent.effectif || 0,
-    adhesionCga: ent.adhesionCga,
-    adherentCGA: ent.adhesionCga ? 'Oui — CGA Agréé' : 'Non',
-    rccm: ent.numeroRccm || '',
-    numeroCnps: ent.numeroCnps || '',
-    numeroCC: ent.numeroCc || '',
-    ncc: ent.numeroCc || '',
-    centreImpots: ent.centreImpots || 'CDI Plateau',
-    profilComplet: ent.profilComplet,
-  };
-}
-
 /** Page d'entrée par rôle (compte actif). */
 export function getDefaultPageForRole(role: string): PageId {
   if (role === 'super_admin') return 'super_admin';
@@ -117,29 +100,6 @@ export function routeAfterLogin(role: string, statut: string): PageId {
   if (statut === 'en_attente') return 'en_attente';
   if (statut === 'suspendu') return 'suspendu';
   return getDefaultPageForRole(role);
-}
-
-function dbEntrepriseToEntity(r: DbEntreprise): CompanyEntity {
-  return {
-    id: r.id,
-    name: r.raison_sociale,
-    raisonSociale: r.raison_sociale,
-    formeJuridique: r.forme_juridique || '',
-    secteurActivite: r.secteur || '',
-    regimeFiscal: r.regime_fiscal || '',
-    caEstime: Number(r.ca_estime) || 0,
-    effectif: r.effectif || 0,
-    adhesionCga: false,
-    cgaNom: '',
-    numeroCnps: '',
-    numeroRccm: r.rccm || '',
-    numeroCc: '',
-    secteurGeographique: '',
-    profilComplet: r.profil_complet,
-    createdBy: '',
-    createdAt: '',
-    centreImpots: 'CDI —',
-  };
 }
 
 export function App() {
@@ -437,6 +397,41 @@ export function App() {
     setAuthUserId(null);
     setDbProfile(null);
     setProfileChecked(false);
+  };
+
+  // ---- RGPD : export + suppression de compte (PEN-033) ----
+  const getAccessToken = async (): Promise<string | null> => {
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token || null;
+  };
+
+  const handleExportData = async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    const res = await fetch('/api/user/export-data', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'legalflow-export.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDeleteAccount = async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+    await fetch('/api/user/account', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    await handleLogout();
   };
 
   // ---- Historique chatbot persisté (chatbot_conversations) ----
@@ -743,11 +738,7 @@ export function App() {
   // Portail public : sans session → landing (défaut), login ou inscription.
   if (useRealAuth && !authUserId) {
     if (!authReady) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-[#F6F6FB]">
-          <div className="text-sm font-bold text-[#4F46A0]">Chargement de la session…</div>
-        </div>
-      );
+      return <Loader label="Chargement de la session…" />;
     }
     if (activePage === 'landing') {
       return <LandingPage onNavigate={handleNavigate} />;
@@ -1016,6 +1007,8 @@ export function App() {
                 onUpdateProfile={(p) => handleSaveCompletedProfile(p)}
                 onOpenSimulator={() => setIsSimulatorOpen(true)}
                 onOpenLaravelCode={() => setIsLaravelViewerOpen(true)}
+                onExportData={handleExportData}
+                onDeleteAccount={handleDeleteAccount}
               />
             )}
           </main>
@@ -1091,11 +1084,13 @@ export function App() {
       <FicheReaderModal fiche={selectedFiche} onClose={() => setSelectedFiche(null)} />
 
       {/* Business Engines Simulator Modal */}
-      <EngineSimulatorModal
-        isOpen={isSimulatorOpen}
-        onClose={() => setIsSimulatorOpen(false)}
-        currentObligations={obligations}
-      />
+      <React.Suspense fallback={null}>
+        <EngineSimulatorModal
+          isOpen={isSimulatorOpen}
+          onClose={() => setIsSimulatorOpen(false)}
+          currentObligations={obligations}
+        />
+      </React.Suspense>
 
       {/* Laravel 12 & PHP 8.3 Code Inspector Modal */}
       <LaravelCodeViewerModal
@@ -1112,19 +1107,21 @@ export function App() {
       />
 
       {/* Rapport d'Audit × Vision « Conformité d'abord » (Miroir vs Certifié) */}
-      <ReportPdfModal
-        isOpen={isReportPdfModalOpen}
-        onClose={() => {
-          setIsReportPdfModalOpen(false);
-          setReportModalProfile(null);
-        }}
-        companyProfile={reportModalProfile || profile}
-        obligations={obligations}
-        opportunities={opportunities}
-        initialState={reportModalState}
-        userRole={currentRole}
-        onArchiveDocument={(doc) => setDocuments((prev) => [doc, ...prev])}
-      />
+      <React.Suspense fallback={null}>
+        <ReportPdfModal
+          isOpen={isReportPdfModalOpen}
+          onClose={() => {
+            setIsReportPdfModalOpen(false);
+            setReportModalProfile(null);
+          }}
+          companyProfile={reportModalProfile || profile}
+          obligations={obligations}
+          opportunities={opportunities}
+          initialState={reportModalState}
+          userRole={currentRole}
+          onArchiveDocument={(doc) => setDocuments((prev) => [doc, ...prev])}
+        />
+      </React.Suspense>
     </div>
   );
 }

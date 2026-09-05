@@ -31,7 +31,6 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [telephone, setTelephone] = useState('');
   const [ville, setVille] = useState('');
   const [numAgrement, setNumAgrement] = useState('');
   const [typeCabinet, setTypeCabinet] = useState('Comptable');
@@ -77,7 +76,6 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
             ? await createEntrepriseProfile(signed.userId, {
                 raisonSociale: raisonSociale.trim(),
                 email: email.trim(),
-                telephone: telephone.trim(),
               })
             : await createCabinetProfile(signed.userId, {
                 raisonSociale: raisonSociale.trim(),
@@ -95,12 +93,13 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
         return;
       }
       // Pas de session immédiate (email à confirmer) : finalisation à la 1re connexion.
+      // PEN-029 : payload minimal en localStorage (jamais de mot de passe ni téléphone).
       if (kind === 'entreprise') {
         savePendingInscription({
           kind,
           userId: signed.userId,
           at: Date.now(),
-          fields: { raisonSociale: raisonSociale.trim(), email: email.trim(), telephone: telephone.trim() },
+          fields: { raisonSociale: raisonSociale.trim(), email: email.trim() },
         });
       } else {
         savePendingInscription({
@@ -111,9 +110,6 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
             raisonSociale: raisonSociale.trim(),
             nomGestionnaire: nomGestionnaire.trim(),
             email: email.trim(),
-            ville: ville.trim(),
-            numAgrement: numAgrement.trim(),
-            typeCabinet,
           },
         });
       }
@@ -234,19 +230,6 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
                 className={inputCls}
               />
             </div>
-
-            {kind === 'entreprise' && (
-              <div>
-                <label className={labelCls}>Téléphone (optionnel)</label>
-                <input
-                  type="tel"
-                  value={telephone}
-                  onChange={(e) => setTelephone(e.target.value)}
-                  placeholder="+225 …"
-                  className={inputCls}
-                />
-              </div>
-            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>

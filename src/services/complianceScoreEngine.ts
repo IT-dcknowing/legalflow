@@ -1,4 +1,27 @@
 import { Obligation } from '../types';
+import { SCORE_PENALITE_BASE } from './constants';
+
+/**
+ * Poids d'un retard selon son ancienneté (PEN-028 LOG-003) : un retard
+ * de 97 jours pèse plus qu'un retard de 4 jours. Facteur 0.5 → 2.
+ */
+export function poidsRetard(joursRetard: number): number {
+  if (joursRetard <= 0) return 0.5;
+  if (joursRetard <= 7) return 0.75;
+  if (joursRetard <= 30) return 1;
+  if (joursRetard <= 90) return 1.5;
+  return 2;
+}
+
+export function joursDeRetard(ob: Obligation, ref: Date = new Date()): number {
+  const iso = ob.echeanceDateIso || ob.dateIso;
+  if (!iso) return 0;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return 0;
+  const cible = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12);
+  const diff = Math.round((ref.getTime() - cible.getTime()) / 86400000);
+  return Math.max(0, diff);
+}
 
 export interface ScoreReport {
   scoreGlobal: number;
@@ -57,8 +80,9 @@ export class ComplianceScoreEngine {
 
       if (ob.statut === 'en_retard') {
         enRetardCount++;
-        domains[domKey].retards++;
-        domains.audit.retards++;
+        const poids = poidsRetard(joursDeRetard(ob));
+        domains[domKey].retards += poids;
+        domains.audit.retards += poids;
         // AMENDEMENT #2 §4 : aucun montant calculé. Seuls les montants saisis
         // (simulation du cabinet) comptent ; sinon l'exposition reste non chiffrée.
         const pen = ob.penaliteEstimee !== undefined ? ob.penaliteEstimee : 0;
@@ -89,7 +113,7 @@ export class ComplianceScoreEngine {
     const calcDomain = (d: { total: number; points: number; retards: number }): number => {
       if (!d || d.total === 0) return 100;
       const raw = (d.points / (d.total * 10)) * 100;
-      const adjusted = raw - (d.retards * 16);
+      const adjusted = raw - d.retards * SCORE_PENALITE_BASE;
       return Math.max(20, Math.min(100, Math.round(adjusted)));
     };
 

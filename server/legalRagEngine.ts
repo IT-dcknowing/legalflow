@@ -1,4 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import { logger } from './logger';
+import { extractError } from '../src/utils/extractError';
 
 // Types pour les fragments juridiques RAG
 export interface RagDocumentResult {
@@ -30,20 +33,28 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 // Singleton Embedder (@xenova/transformers)
+// PEN-032 : si EMBEDDER_LOCAL_PATH pointe vers des poids pré-téléchargés
+// (scripts/download-embedder.ts), ils sont utilisés sans accès HuggingFace.
 let embedderPromise: Promise<any> | null = null;
+
+function resolveModelId(): string {
+  const localPath = process.env.EMBEDDER_LOCAL_PATH;
+  if (localPath && fs.existsSync(localPath)) {
+    logger.info({ localPath }, 'Embedder local pré-packagé détecté');
+    return localPath;
+  }
+  return 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
+}
 
 export async function getEmbedder() {
   if (!embedderPromise) {
     embedderPromise = (async () => {
       try {
         const { pipeline } = await import('@xenova/transformers');
-        const extractor = await pipeline(
-          'feature-extraction',
-          'Xenova/paraphrase-multilingual-MiniLM-L12-v2'
-        );
+        const extractor = await pipeline('feature-extraction', resolveModelId());
         return extractor;
-      } catch (err) {
-        console.warn('Erreur initialisation Xenova Transformers:', err);
+      } catch (err: unknown) {
+        logger.warn({ err: extractError(err) }, 'Erreur initialisation Xenova Transformers');
         return null;
       }
     })();
@@ -59,8 +70,8 @@ export async function computeQueryEmbedding(text: string): Promise<number[] | nu
 
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data) as number[];
-  } catch (err) {
-    console.warn('Erreur lors du calcul de embedding query:', err);
+  } catch (err: unknown) {
+    logger.warn({ err: extractError(err) }, 'Erreur lors du calcul de embedding query');
     return null;
   }
 }
@@ -209,10 +220,10 @@ export async function searchLegalDocuments(
           similarity: typeof item.similarity === 'number' ? item.similarity : 0.85,
         }));
       } else if (error) {
-        console.warn('RPC match_documents error, falling back to SQL query:', error.message);
+        logger.warn({ err: error.message }, 'RPC match_documents error, repli SQL');
       }
-    } catch (rpcErr) {
-      console.warn('Supabase RPC call failed:', rpcErr);
+    } catch (rpcErr: unknown) {
+      logger.warn({ err: extractError(rpcErr) }, 'Supabase RPC call failed');
     }
 
     // 3. Repli SQL plein-texte avec ilike sur la table documents_juridiques
@@ -241,8 +252,8 @@ export async function searchLegalDocuments(
           }));
         }
       }
-    } catch (sqlErr) {
-      console.warn('Supabase SQL fallback failed:', sqlErr);
+    } catch (sqlErr: unknown) {
+      logger.warn({ err: extractError(sqlErr) }, 'Supabase SQL fallback failed');
     }
   }
 

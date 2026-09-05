@@ -26,6 +26,9 @@ laravel/storage/logs/
 .phpunit.result.cache
 laravel/coverage/
 
+# ── ML local (poids Xenova pré-téléchargés, ~30 Mo, PEN-032) ──
+server/models/
+
 # ── Logs & coverage ──
 *.log
 coverage/

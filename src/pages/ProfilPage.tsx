@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { CompanyProfile } from '../types';
-import { Building2, Save, CheckCircle2 } from 'lucide-react';
+import { Building2, Save, CheckCircle2, Download, Trash2 } from 'lucide-react';
 
 interface ProfilPageProps {
   profile: CompanyProfile;
   onUpdateProfile: (updated: CompanyProfile) => void;
   onOpenSimulator: () => void;
   onOpenLaravelCode: () => void;
+  onExportData?: () => void;
+  onDeleteAccount?: () => void;
 }
 
 export const ProfilPage: React.FC<ProfilPageProps> = ({
@@ -14,10 +16,14 @@ export const ProfilPage: React.FC<ProfilPageProps> = ({
   onUpdateProfile,
   onOpenSimulator,
   onOpenLaravelCode,
+  onExportData,
+  onDeleteAccount,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<CompanyProfile>(profile);
   const [savedMsg, setSavedMsg] = useState(false);
+  // PEN-033 : double confirmation avant suppression irréversible.
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,6 +221,58 @@ export const ProfilPage: React.FC<ProfilPageProps> = ({
           Exporter la fiche signalétique fiscale
         </button>
       </div>
+
+      {/* Données personnelles RGPD (PEN-033, Loi CI 2013-450) */}
+      {(onExportData || onDeleteAccount) && (
+        <div className="bg-white border border-[#E5E5F0] rounded-xl p-4 sm:p-5 space-y-3">
+          <div>
+            <h3 className="m-0 text-sm font-extrabold text-[#171A2E]">Mes données personnelles</h3>
+            <p className="m-0 mt-1 text-xs text-[#6B6F85]">
+              Exportez l’intégralité de vos données ou demandez la suppression de votre compte.
+            </p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {onExportData && (
+              <button
+                onClick={onExportData}
+                className="inline-flex items-center gap-1.5 bg-white border border-[#E5E5F0] hover:bg-[#F6F6FB] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#4F46A0] transition-colors cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Exporter mes données (JSON)</span>
+              </button>
+            )}
+            {onDeleteAccount &&
+              (confirmDelete ? (
+                <span className="inline-flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      onDeleteAccount();
+                      setConfirmDelete(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-[#C4432B] hover:bg-[#A03522] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-white transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Confirmer la suppression définitive</span>
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="text-xs font-bold text-[#64748B] hover:text-[#1E293B] px-2 py-2 cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="inline-flex items-center gap-1.5 bg-white border border-[#F8B4A6] hover:bg-[#FBEAE5] px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-[#C4432B] transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Supprimer mon compte</span>
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

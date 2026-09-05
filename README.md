@@ -14,7 +14,17 @@ View your app in AI Studio: https://ai.studio/apps/97c7b6a6-4858-41f7-bb93-6a7bb
 
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+   `bun install` (ou `npm install`)
+2. Copier `.env.example` vers `.env` et renseigner les clés (`VITE_SUPABASE_URL`,
+   `VITE_SUPABASE_ANON_KEY`, `OPENROUTER_API_KEY`).
 3. Run the app:
-   `npm run dev`
+   `bun run dev` (ou `npm run dev`) → http://localhost:3000
+
+## Embedder offline (optionnel, PEN-032)
+
+Par défaut les poids Xenova sont téléchargés depuis HuggingFace au premier appel.
+Pour un démarrage sans réseau externe :
+
+1. `bun run download:embedder` (~30 Mo dans `server/models/`, ignoré par git)
+2. Ajouter `EMBEDDER_LOCAL_PATH=./server/models` dans `.env`
+3. En Docker : `COPY server/models ./server/models`

@@ -1,72 +1,113 @@
 import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
+import * as Sentry from '@sentry/node';
 import { createServer as createViteServer } from 'vite';
 import {
   searchLegalDocuments,
   getEmbedder,
   RagDocumentResult,
 } from './server/legalRagEngine';
+import { logger } from './server/logger';
+import { correlationId } from './server/middleware/correlationId';
+import { requireAuth } from './server/middleware/requireAuth';
+import { apiLimiter } from './server/middleware/apiLimiter';
+import { chatSchema, ragSearchSchema } from './server/schemas/chat';
+import { openrouterBreaker, breakerState } from './server/circuit/openrouterBreaker';
+import { ragCache, ragCacheKey, RagCacheEntry } from './server/cache/ragCache';
+import { metricsMiddleware, metricsRegistry } from './server/metrics';
+import { detectTheme } from './server/fallback/normalize';
+import { extractError } from './src/utils/extractError';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
+
+// Sentry : actif uniquement si DSN fourni (PEN-023).
+if (process.env.SENTRY_DSN) {
+  Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0.1 });
+}
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
+// Ordre des middlewares : corrélation → métriques → routes.
+app.use(correlationId);
+app.use(metricsMiddleware);
 
 // Warm-up asynchrone de l'embedder (MiniLM-L12-v2) dès le démarrage
 getEmbedder()
-  .then(() => console.log('🤖 Embedder Xenova/MiniLM-L12-v2 warm-up réussi.'))
-  .catch((err) => console.warn('Warm-up embedder:', err));
+  .then(() => logger.info('Embedder Xenova/MiniLM-L12-v2 warm-up réussi.'))
+  .catch((err: unknown) => logger.warn({ err: extractError(err) }, 'Warm-up embedder.'));
 
-// 1. Route de Santé API
+// 1. Route de Santé API (publique)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'Legal Flow CI Backend',
     llmProvider: 'OpenRouter',
     defaultModel: 'minimax/minimax-m3:free',
+    breaker: breakerState(),
+    ragCacheSize: ragCache.size,
     hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
     hasSupabaseKey: !!process.env.SUPABASE_URL,
     timestamp: new Date().toISOString(),
   });
 });
 
-// 2. Route RAG direct (test & audit des extraits juridiques)
-app.post('/api/rag/search', async (req, res) => {
-  try {
-    const { query, limit = 6 } = req.body;
-    if (!query || typeof query !== 'string') {
-      return res.status(400).json({ error: 'Paramètre "query" obligatoire.' });
-    }
+// Métriques Prometheus (PEN-034, exposition standard non authentifiée)
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', metricsRegistry.contentType);
+  res.send(await metricsRegistry.metrics());
+});
 
-    const results = await searchLegalDocuments(query, Number(limit) || 6);
+// 2. Route RAG direct (test & audit des extraits juridiques) — protégée PEN-021
+app.post('/api/rag/search', apiLimiter, requireAuth, async (req, res) => {
+  const reqId = (req as any).id;
+  try {
+    const parsed = ragSearchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Paramètre "query" obligatoire (max 1000 caractères).' });
+    }
+    const { query, limit } = parsed.data;
+
+    const results = await searchLegalDocuments(query, limit);
     return res.json({
       query,
       count: results.length,
       results,
     });
-  } catch (error: any) {
-    console.error('Erreur API /api/rag/search:', error);
-    return res.status(500).json({ error: error.message || 'Erreur RAG search' });
+  } catch (error: unknown) {
+    logger.error({ reqId, err: extractError(error) }, 'Erreur API /api/rag/search');
+    return res.status(500).json({ error: 'Erreur RAG search' });
   }
 });
 
 // 3. Route Principale Chat LLM & RAG (OpenRouter minimax/minimax-m3:free + Fallback Déterministe)
-app.post('/api/chat', async (req, res) => {
-  const { message, dossierContext = '', contextSlices = [] } = req.body;
+// Protégée : JWT (401) + rate limit (429) + validation Zod (400). Cache LRU + circuit breaker.
+app.post('/api/chat', apiLimiter, requireAuth, async (req, res) => {
+  const reqId = (req as any).id;
+  const userId = ((req as any).user?.id as string) || '';
+  const parsed = chatSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Le champ "message" est requis (1 à 1000 caractères).' });
+  }
+  const { message, dossierContext, contextSlices } = parsed.data;
 
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'Le champ "message" est requis.' });
+  // Cache : question identique → réponse immédiate (< 5ms, sans Supabase ni OpenRouter)
+  const cacheKey = ragCacheKey(message, userId);
+  const cached = ragCache.get(cacheKey) as RagCacheEntry | undefined;
+  if (cached) {
+    logger.info({ reqId, cache: 'hit' }, 'RAG cache hit');
+    return res.json({ ...cached, cacheHit: true });
   }
 
   // 1 & 2. Récupération des extraits RAG juridiques (Supabase pgvector match_documents / SQL fallback / Local)
   let ragDocuments: RagDocumentResult[] = [];
   try {
     ragDocuments = await searchLegalDocuments(message, 6);
-  } catch (ragErr) {
-    console.warn('Erreur RAG search:', ragErr);
+  } catch (ragErr: unknown) {
+    logger.warn({ reqId, err: extractError(ragErr) }, 'Erreur RAG search');
   }
 
   // 3. Assemblage du Prompt Système strict anti-hallucination
@@ -107,46 +148,26 @@ ${legalContextText || "Aucun extrait textuel spécifique identifié."}`;
 
   const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 
-  // 4. Appel HTTP vers OpenRouter si clé disponible
+  // 4. Appel OpenRouter via circuit breaker (timeout 12s AbortController, fallback instantané si ouvert)
   if (openRouterApiKey) {
     try {
-      const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${openRouterApiKey}`,
-          'HTTP-Referer': 'https://legalflow.ci',
-          'X-Title': 'Legal Flow CI - Assistant Fiscal & Juridique',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      const reply = await openrouterBreaker.fire({ systemPrompt, message });
+      if (reply) {
+        const payload: RagCacheEntry = {
+          reply,
+          sources: ragDocuments,
           model: 'minimax/minimax-m3:free',
-          temperature: 0.3,
-          max_tokens: 1500,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message },
-          ],
-        }),
-      });
-
-      if (openRouterResponse.ok) {
-        const data = await openRouterResponse.json();
-        const reply = data.choices?.[0]?.message?.content;
-        if (reply) {
-          return res.json({
-            reply,
-            sources: ragDocuments,
-            model: 'minimax/minimax-m3:free',
-            contextSlices,
-            isFallback: false,
-          });
-        }
-      } else {
-        const errText = await openRouterResponse.text();
-        console.warn(`OpenRouter HTTP ${openRouterResponse.status}:`, errText);
+          contextSlices,
+          isFallback: false,
+        };
+        ragCache.set(cacheKey, payload);
+        return res.json(payload);
       }
-    } catch (openRouterErr) {
-      console.warn('Erreur appel OpenRouter API:', openRouterErr);
+    } catch (openRouterErr: unknown) {
+      logger.warn(
+        { reqId, err: extractError(openRouterErr), breaker: breakerState() },
+        'OpenRouter indisponible, bascule fallback'
+      );
     }
   }
 
@@ -154,13 +175,78 @@ ${legalContextText || "Aucun extrait textuel spécifique identifié."}`;
   // Construit une réponse experte déterministe pré-formatée avec les citations officielles réelles et les démarches adaptées au profil de l'entreprise
   const fallbackReply = buildDeterministicExpertResponse(message, ragDocuments, dossierContext);
 
-  return res.json({
+  const fallbackPayload: RagCacheEntry = {
     reply: fallbackReply,
     sources: ragDocuments,
     model: 'local-ci-rules-engine',
     contextSlices,
     isFallback: true,
+  };
+  ragCache.set(cacheKey, fallbackPayload);
+  return res.json(fallbackPayload);
+});
+
+// Client Supabase agissant AVEC le token de l'utilisateur (RLS appliquée).
+function userClient(req: express.Request) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  return createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
   });
+}
+
+// 4. RGPD — Export des données utilisateur (PEN-033, Loi CI 2013-450)
+app.get('/api/user/export-data', apiLimiter, requireAuth, async (req, res) => {
+  const reqId = (req as any).id;
+  try {
+    const userId = ((req as any).user?.id as string) || '';
+    const sb = userClient(req);
+    const [profile, entreprises, journal, conversations] = await Promise.all([
+      sb.from('profiles').select('*').eq('id', userId),
+      sb.from('entreprises').select('*'),
+      sb.from('journal_evenements').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(500),
+      sb.from('chatbot_conversations').select('id, titre, messages, created_at, updated_at').eq('user_id', userId),
+    ]);
+    const exportDoc = {
+      exported_at: new Date().toISOString(),
+      user_id: userId,
+      profile: (profile.data && profile.data[0]) || null,
+      entreprises: entreprises.data || [],
+      journal: journal.data || [],
+      conversations: conversations.data || [],
+      preuves: 'Fichiers du bucket preuves : demandez les URLs signées depuis Documents.',
+    };
+    res.set('Content-Disposition', 'attachment; filename="legalflow-export.json"');
+    return res.json(exportDoc);
+  } catch (error: unknown) {
+    logger.error({ reqId, err: extractError(error) }, 'Erreur export RGPD');
+    return res.status(500).json({ error: 'Export impossible.' });
+  }
+});
+
+// 5. RGPD — Suppression du compte (PEN-033, partiel : purge auth.users exige
+// service_role, indisponible ici → anonymisation app + dissociation à finaliser
+// via Edge Function ; voir kanban PEN-033).
+app.delete('/api/user/account', apiLimiter, requireAuth, async (req, res) => {
+  const reqId = (req as any).id;
+  try {
+    const userId = ((req as any).user?.id as string) || '';
+    const sb = userClient(req);
+    await sb.from('chatbot_conversations').delete().eq('user_id', userId);
+    await sb
+      .from('profiles')
+      .update({ nom_complet: 'Compte supprimé', email: null, entreprise_id: null, cabinet_id: null })
+      .eq('id', userId);
+    logger.warn({ reqId, userId }, 'Compte anonymisé (purge auth.users en attente service_role)');
+    return res.json({
+      deleted: ['chatbot_conversations', 'données profil (anonymisé)'],
+      pending: ['auth.users : purge via service_role (Edge Function à créer)'],
+    });
+  } catch (error: unknown) {
+    logger.error({ reqId, err: extractError(error) }, 'Erreur suppression compte');
+    return res.status(500).json({ error: 'Suppression impossible.' });
+  }
 });
 
 /**
@@ -171,10 +257,12 @@ function buildDeterministicExpertResponse(
   sources: RagDocumentResult[],
   dossierContext: string
 ): string {
-  const lower = query.toLowerCase();
+  // PEN-030 : matching normalisé (accents, synonymes, racinisation) + score loggé.
+  const match = detectTheme(query);
+  logger.info({ theme: match.theme, score: match.score }, 'Fallback matching');
 
   // Thème TVA / Déclaration fiscale
-  if (lower.includes('tva') || (lower.includes('retard') && lower.includes('impot'))) {
+  if (match.theme === 'tva') {
     return `### 1. La règle essentielle
 En Côte d'Ivoire, toute entreprise sous le régime RSI ou Réel Normal est tenue de déclarer et d'acquitter la TVA (taux standard de 18%) au plus tard le **20 de chaque mois** pour les opérations du mois précédent.
 
@@ -201,7 +289,7 @@ Si votre entreprise adhère à un **CGA (Centre de Gestion Agréé)**, vous bén
   }
 
   // Thème CNPS / Cotisations sociales
-  if (lower.includes('cnps') || lower.includes('retraite') || lower.includes('prestation')) {
+  if (match.theme === 'cnps') {
     return `### 1. La règle essentielle
 Les cotisations sociales de sécurité sociale doivent être déclarées et payées obligatoirement au plus tard le **15 de chaque mois** via le portail e-CNPS pour les entreprises de plus de 20 salariés (ou par trimestre si moins de 20 salariés selon votre option).
 
@@ -233,7 +321,7 @@ Assurez-vous de déclarer la Déclaration Individuelle des Salaires Annuels (DIS
   }
 
   // Thème CMU
-  if (lower.includes('cmu') || lower.includes('couverture')) {
+  if (match.theme === 'cmu') {
     return `### 1. La règle essentielle
 L'affiliation et le paiement de la Couverture Maladie Universelle (CMU) sont obligatoires pour l'ensemble des salariés déclarés en Côte d'Ivoire depuis le décret de généralisation.
 
@@ -255,7 +343,7 @@ Passez une convention de groupe avec un centre d'enrôlement mobile de la CNAM p
   }
 
   // Thème CGA / Optimisation fiscale
-  if (lower.includes('cga') || lower.includes('reduction') || lower.includes('credit') || lower.includes('optimisation')) {
+  if (match.theme === 'cga') {
     return `### 1. La règle essentielle
 L'adhésion à un Centre de Gestion Agréé (CGA) accorde une réduction d'impôt substantielle de **20% à 25%** sur le bénéfice net imposable de l'entreprise (Article 110 du CGI).
 
@@ -278,7 +366,7 @@ Associez l'adhésion CGA à la souscription d'un plan de formation continue **FD
   }
 
   // Thème Seuil RSI 150M FCFA & Régimes d'imposition
-  if (lower.includes('seuil') || lower.includes('150') || (lower.includes('rsi') && lower.includes('reel'))) {
+  if (match.theme === 'seuil') {
     return `### 1. La règle essentielle
 En vertu de l'Article 45 du Code Général des Impôts et de l'Annexe Fiscale, le Régime Simplifié d'Imposition (RSI) est plafonné à **150 000 000 FCFA de chiffre d'affaires annuel hors taxes**.
 
@@ -301,7 +389,7 @@ Si votre entreprise adhère à un **CGA**, vous bénéficiez d'une phase transit
   }
 
   // Thème FDFP (Formation professionnelle continue & Apprentissage)
-  if (lower.includes('fdfp') || lower.includes('formation') || lower.includes('apprentissage')) {
+  if (match.theme === 'fdfp') {
     return `### 1. La règle essentielle
 Toute entreprise employeur en Côte d'Ivoire cotise obligatoirement au **FDFP** à hauteur de **1,6% de sa masse salariale brute** (0,4% taxe d'apprentissage + 1,2% contribution à la formation continue).
 
@@ -324,7 +412,7 @@ Regroupez vos sessions de formation sécurité sur vos chantiers BTP pour maximi
   }
 
   // Thème Embauche / Salariés / Code du Travail CI
-  if (lower.includes('embauche') || lower.includes('contrat') || lower.includes('cdd') || lower.includes('cdi') || lower.includes('smig')) {
+  if (match.theme === 'embauche') {
     return `### 1. La règle essentielle
 Conformément aux Articles 14.1 à 15.3 du Code du Travail ivoirien, tout recrutement doit faire l'objet d'une déclaration préalable et d'une immatriculation CNPS dans un **délai maximal de 8 jours**.
 
@@ -347,7 +435,7 @@ Utilisez le contrat d'apprentissage ou le programme stage-école validé par la 
   }
 
   // Thème Douanes & Importations BTP
-  if (lower.includes('douane') || lower.includes('bsc') || lower.includes('sydonia') || lower.includes('transit') || lower.includes('import')) {
+  if (match.theme === 'douane') {
     return `### 1. La règle essentielle
 Toute importation maritime de matériaux ou engins requiert obligatoirement l'émission préalable d'un **Bordereau de Suivi des Cargaisons (BSC)** validé par l'Office Ivoirien des Chargeurs (OIC) avant le départ du navire.
 
@@ -370,7 +458,7 @@ Consultez le Code des Investissements pour solliciter un agrément d'exonératio
   }
 
   // Thème Attestation de Régularité Fiscale (ARF) & Quitus
-  if (lower.includes('arf') || lower.includes('attestation') || lower.includes('quitus') || lower.includes('regularite')) {
+  if (match.theme === 'arf') {
     return `### 1. La règle essentielle
 L'Attestation de Régularité Fiscale (ARF) est délivrée automatiquement en ligne sur e-impots.gouv.ci aux entreprises à jour de toutes leurs déclarations et paiements d'impôts directs et indirects.
 
@@ -414,7 +502,7 @@ Conformément à la législation ivoirienne en vigueur (${topSource?.source_fich
 Consultez votre onglet *« Opportunités »* pour vérifier l'éligibilité au crédit d'impôt d'apprentissage et la mise à jour de votre Attestation de Régularité Fiscale (ARF).`;
 }
 
-// 4. Configuration Vite Middleware (dev) ou Static SPA (prod)
+// 6. Configuration Vite Middleware (dev) ou Static SPA (prod)
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -431,8 +519,23 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Legal Flow Server running on http://0.0.0.0:${PORT}`);
+    logger.info(`Legal Flow Server running on http://0.0.0.0:${PORT}`);
   });
 }
+
+// Erreurs non capturées → Sentry (si DSN) + 500 JSON.
+app.use(
+  (
+    err: unknown,
+    req: express.Request,
+    res: express.Response,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _next: express.NextFunction
+  ) => {
+    if (process.env.SENTRY_DSN) Sentry.captureException(err);
+    logger.error({ reqId: (req as any).id, err: extractError(err) }, 'Erreur non capturée');
+    res.status(500).json({ error: 'Erreur interne.' });
+  }
+);
 
 startServer();

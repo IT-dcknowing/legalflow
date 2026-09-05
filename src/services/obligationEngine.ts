@@ -22,6 +22,49 @@ import {
   pillForDate,
   toIsoDate,
 } from './dateReference';
+import {
+  DEFAULT_TAX_DUE_DAY,
+  TVA_DUE_DAY,
+  IRVM_DUE_DAY,
+  CMU_DUE_DAY,
+  EFFECTIF_CHSCT_SEUIL,
+  EFFECTIF_DELEGUES_SEUIL,
+} from './constants';
+
+/** Occurrences de seuils d'effectif (PEN-028 LOG-004) : pur, testé, NON câblé
+ *  au pipeline d'affichage (amendement #2 : l'événementiel reste exclu de la
+ *  fenêtre En retard / Mois en cours / Mois prochain). */
+export interface ThresholdOccurrence {
+  ruleId: string;
+  label: string;
+  seuil: number;
+  atteint: boolean;
+}
+
+export function generateThresholdOccurrences(effectif: number): ThresholdOccurrence[] {
+  return [
+    {
+      ruleId: 'RULE_CT_DELEGUES_PERSONNEL',
+      label: 'Élection des Délégués du Personnel (> 10 salariés)',
+      seuil: EFFECTIF_DELEGUES_SEUIL,
+      atteint: effectif >= EFFECTIF_DELEGUES_SEUIL,
+    },
+    {
+      ruleId: 'RULE_CT_CHSCT_SEUIL_50',
+      label: 'Mise en place du CHSCT (> 50 salariés)',
+      seuil: EFFECTIF_CHSCT_SEUIL,
+      atteint: effectif >= EFFECTIF_CHSCT_SEUIL,
+    },
+  ];
+}
+
+/** Tri par dates réelles (PEN-028 LOG-002) : plus de localeCompare sur chaînes. */
+function compareIsoDates(aIso: string, bIso: string): number {
+  const a = parseIsoDate(aIso);
+  const b = parseIsoDate(bIso);
+  if (a && b) return a.getTime() - b.getTime();
+  return aIso.localeCompare(bIso);
+}
 
 export interface CompanyProfile {
   id?: string;
@@ -199,7 +242,7 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt, O41 / IMPOTS ET TAXES.txt, IT_22',
     periodicite: 'mensuelle',
-    jourDuMois: 20,
+    jourDuMois: TVA_DUE_DAY,
     regimesApplicables: ['RSI', 'RNI'],
   },
   {
@@ -453,7 +496,7 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-impots.gouv.ci (DGI CI)',
     source: 'CALENDRIER DES OBLIGATIONS FISCALES.txt / CGI 2026',
     periodicite: 'mensuelle',
-    jourDuMois: 31,
+    jourDuMois: IRVM_DUE_DAY,
     regimesApplicables: ['TOUS'],
   },
   {
@@ -467,7 +510,7 @@ export const LEGAL_RULES: Rule[] = [
     teleservice: 'e-cnps.ci / CNAM (CMU)',
     source: 'Decret_CMU_Obligatoire_2025.txt',
     periodicite: 'mensuelle',
-    jourDuMois: 10,
+    jourDuMois: CMU_DUE_DAY,
     minEffectif: 1,
     regimesApplicables: ['TOUS'],
   },
@@ -556,7 +599,7 @@ export class ObligationEngine {
       if (rule.periodicite === 'mensuelle') {
         // Occurrence échue + 2 prochaines : les 3 blocs (En retard / Mois en cours /
         // Mois prochain) restent alimentés quelle que soit la position dans le mois.
-        const { past, next, following } = monthlyTriple(rule.jourDuMois || 15, refDate);
+        const { past, next, following } = monthlyTriple(rule.jourDuMois || DEFAULT_TAX_DUE_DAY, refDate);
         emitOccurrence(instances, rule, past, refDate, quittancesPointerMap);
         emitOccurrence(instances, rule, next, refDate, quittancesPointerMap);
         emitOccurrence(instances, rule, following, refDate, quittancesPointerMap);
@@ -565,7 +608,7 @@ export class ObligationEngine {
       if (rule.periodicite === 'trimestrielle') {
         const { past, next } = periodicPair(
           rule.trimestreMois || [4, 6, 9],
-          rule.jourDuMois || 15,
+          rule.jourDuMois || DEFAULT_TAX_DUE_DAY,
           refDate
         );
         emitOccurrence(instances, rule, past, refDate, quittancesPointerMap);
@@ -573,7 +616,7 @@ export class ObligationEngine {
         return;
       }
       if (rule.periodicite === 'annuelle') {
-        const occ = monthlyDate(refYear, (rule.moisEcheance || 12) - 1, rule.jourDuMois || 15);
+        const occ = monthlyDate(refYear, (rule.moisEcheance || 12) - 1, rule.jourDuMois || DEFAULT_TAX_DUE_DAY);
         emitOccurrence(instances, rule, occ, refDate, quittancesPointerMap);
         return;
       }
@@ -586,7 +629,7 @@ export class ObligationEngine {
       if (a.statut === 'en_retard' && b.statut !== 'en_retard') return -1;
       if (b.statut === 'en_retard' && a.statut !== 'en_retard') return 1;
       if (a.statut === 'en_retard' && b.statut === 'en_retard') return b.joursRetard - a.joursRetard;
-      return a.dateEcheanceIso.localeCompare(b.dateEcheanceIso);
+      return compareIsoDates(a.dateEcheanceIso, b.dateEcheanceIso);
     });
 
     const nombreObligationsTotal = instances.length;
@@ -600,7 +643,7 @@ export class ObligationEngine {
     // Prochaine échéance : la plus proche date d'échéance à venir
     const aVenirList = instances
       .filter((o) => o.statut === 'a_venir')
-      .sort((a, b) => a.dateEcheanceIso.localeCompare(b.dateEcheanceIso));
+      .sort((a, b) => compareIsoDates(a.dateEcheanceIso, b.dateEcheanceIso));
     const prochaineEcheance = aVenirList.length > 0 ? aVenirList[0] : null;
 
     // Alertes urgentes : obligations en retard avec leur source légale et sanction textuelle

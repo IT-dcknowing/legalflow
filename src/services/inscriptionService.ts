@@ -14,7 +14,6 @@ import {
 export interface EntrepriseSignupFields {
   raisonSociale: string;
   email: string;
-  telephone?: string;
 }
 
 export interface CabinetSignupFields {
@@ -66,7 +65,6 @@ export async function createEntrepriseProfile(
     .insert({
       raison_sociale: f.raisonSociale,
       email_contact: f.email,
-      telephone: f.telephone || null,
       profil_complet: false,
     })
     .select('id')

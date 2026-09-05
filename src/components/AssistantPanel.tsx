@@ -257,9 +257,19 @@ Posez-moi vos questions sur vos obligations, calculs de cotisations, vos démarc
 
     try {
       // 3. Appel au backend Express POST /api/chat (RAG pgvector + OpenRouter LLM)
+      // PEN-021 : la route exige le JWT Supabase (401 sinon).
+      let authHeader: Record<string, string> = {};
+      try {
+        const { supabase } = await import('../services/supabaseClient');
+        const { data: sess } = await supabase!.auth.getSession();
+        const token = sess?.session?.access_token;
+        if (token) authHeader = { Authorization: `Bearer ${token}` };
+      } catch {
+        /* sans session : le backend répondra 401 et le fallback local prendra le relais */
+      }
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader },
         body: JSON.stringify({
           message: text,
           dossierContext: routedContext.dossierSummary,

@@ -1037,6 +1037,352 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Recette documentaire : ACCEPTANCE.md à la racine (10 critères, statuts + procédures + observés). Correctifs éventuels → PEN-021+.',
     historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" — 10 critères d\'acceptation. Tâche de clôture du chantier.', '2026-09-05 : TERMINÉ. 7 critères ✅ prouvés, 3 partiels (⚠️ visuel navigateur / emails stub / rate limit). Voir ACCEPTANCE.md.']
+  },
+  {
+    id: 'PEN-021', state: 'done', priority: 'haute',
+    title: 'Sécuriser /api/chat et /api/rag/search : JWT Supabase + Rate Limiting + validation Zod',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['securite', 'api', 'express', 'rate-limit', 'jwt', 'zod'],
+    depends_on: [],
+    objectif: 'Fermer les 3 failles critiques de server.ts (SEC-001, SEC-002, SEC-003) : (1) exiger un Bearer token JWT Supabase valide sur /api/chat et /api/rag/search, (2) limiter le débit (10-30 req / 15 min par IP via express-rate-limit), (3) valider et borner la taille des champs message et dossierContext avec Zod (max 1000 caractères, sanitization caractères de contrôle).',
+    contexte: 'Audit #1 (mars 2025) : score 52/100 en sécurité. Aujourd\'hui n\'importe qui peut consommer l\'API RAG et épuiser le quota OpenRouter. C\'est le P0 du rapport d\'audit.',
+    etapes: [
+      'Installer express-rate-limit et zod (bun add).',
+      'Créer src/server/middleware/requireAuth.ts : vérifie Authorization Bearer, appelle supabase.auth.getUser(token), attache req.user.',
+      'Créer src/server/middleware/apiLimiter.ts : rateLimit({ windowMs: 15*60*1000, max: 30 }).',
+      'Créer src/server/schemas/chat.ts : z.object({ message: z.string().min(1).max(1000), dossierContext: z.string().max(4000).optional() }).',
+      'Appliquer requireAuth + apiLimiter sur les routes /api/chat et /api/rag/search dans server.ts.',
+      'Tester avec un token invalide (401), un payload trop long (400), et un spam (429).',
+      'Documenter dans server.ts l\'ordre des middlewares.'
+    ],
+    criteres: [
+      'Un appel sans token retourne 401.',
+      'Un appel avec un message > 1000 caractères retourne 400.',
+      '31 requêtes en 15 min depuis la même IP retournent 429.',
+      'Les requêtes légitimes (token valide + payload conforme) passent toujours.'
+    ],
+    notes: 'Fait le 2026-09-05 : middleware requireAuth (getUser), apiLimiter 30/15min, zod 1000/4000, frontend envoie le JWT. Vérifié live : 401/401/400/200/429. Piège trouvé : dotenv chargé APRÈS les imports ESM → verifier lazy. Chemins server/ (pas src/server/).',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (SEC-001, SEC-002, SEC-003) — P0 sécurité.', '2026-09-05 : TERMINÉ et testé en live.']
+  },
+  {
+    id: 'PEN-022', state: 'done', priority: 'haute',
+    title: 'Migration pgvector : IVFFlat → HNSW + seuil de similarité dans match_documents',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'pgvector', 'sql', 'rls', 'rls'],
+    depends_on: [],
+    objectif: 'Corriger BDD-002 et BDD-003 : remplacer l\'index IVFFlat (créé sur table vide → centroïdes erronés) par un index HNSW, et ajouter un seuil de similarité cosinus (0.45) dans la fonction RPC match_documents pour éviter les retours hors-sujet.',
+    contexte: 'Audit #1 BDD-002/003 : l\'index IVFFlat avec lists=100 sur une table vide produit des centroïdes aléatoires qui ruinent la précision RAG. Le seuil de similarité manque → des documents non pertinents peuvent être retournés.',
+    etapes: [
+      'Nouvelle migration supabase/migrations/0005_pen022_hnsw.sql.',
+      'DROP INDEX IF EXISTS idx_documents_juridiques_embedding.',
+      'CREATE INDEX idx_documents_juridiques_embedding_hnsw ON public.documents_juridiques USING hnsw (embedding vector_cosine_ops).',
+      'CREATE OR REPLACE FUNCTION public.match_documents : ajouter WHERE (1 - (d.embedding <=> query_embedding)) > 0.45.',
+      'Tester une recherche : doit retourner moins de bruit, les résultats doivent être plus pertinents.',
+      'Documenter dans src/data/supabaseSchema.sql (commentaire) que la migration 0005 a remplacé IVFFlat.'
+    ],
+    criteres: [
+      'L\'index HNSW existe (\\d+ public.documents_juridiques).',
+      'match_documents retourne uniquement des lignes avec similarity > 0.45.',
+      'Les tests manuels RAG montrent moins de résultats hors-sujet.'
+    ],
+    notes: 'Vérifié le 2026-09-05 : index DÉJÀ HNSW en prod (BDD-002 sans objet), 8005 docs tous avec embedding. Seuil 0.45 appliqué (migration 0005) et testé (self 1.0, voisins 0.84). supabaseSchema.sql non touché (legacy en conflit avec schéma live).',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (BDD-002, BDD-003).', '2026-09-05 : TERMINÉ (seuil uniquement, HNSW pré-existant).']
+  },
+  {
+    id: 'PEN-023', state: 'done', priority: 'haute',
+    title: 'Logger structuré (Pino) + Sentry + typage unknown des erreurs',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['observabilite', 'logging', 'sentry', 'pino', 'typescript'],
+    depends_on: [],
+    objectif: 'Audit #1 COD-001 + audit #2 obs 20/100 : remplacer console.log par Pino (JSON structuré), brancher Sentry sur Express (backend) et React (frontend), et typer les catch en unknown avec un helper d\'extraction d\'erreur.',
+    contexte: 'Aujourd\'hui le serveur log en texte brut via console. Impossible à parser dans un ELK/Datadog. Aucune trace structurée, pas de correlation-id, pas d\'error tracking.',
+    etapes: [
+      'Installer pino et @sentry/node côté serveur, @sentry/react côté frontend.',
+      'Créer src/server/logger.ts : export const logger = pino({ level: process.env.LOG_LEVEL || "info", redact: ["req.headers.authorization"] }).',
+      'Remplacer tous les console.log/console.error de server.ts et legalRagEngine.ts par logger.info/warn/error.',
+      'Ajouter un middleware correlation-id : génère un UUID par requête, l\'attache à req, le log dans chaque ligne.',
+      'Sentry.init dans server.ts avec DSN depuis process.env.SENTRY_DSN.',
+      'Sentry.init dans src/main.tsx (browser) avec tracesSampleRate 0.1.',
+      'Helper src/utils/extractError.ts : (err: unknown) => string — gère Error, string, object, null.',
+      'Typer les catch : catch (err: unknown) puis const message = extractError(err).',
+      'Tester : une exception non capturée doit apparaître dans Sentry avec correlation-id.'
+    ],
+    criteres: [
+      'Aucun console.log/console.error ne subsiste dans server.ts (grep vide).',
+      'Les logs sont au format JSON parsable.',
+      'Une exception volontaire remonte dans Sentry.',
+      'correlation-id présent dans chaque log de la même requête.'
+    ],
+    notes: 'Fait : pino + correlation-id + redact auth, console.* remplacés côté serveur, extractError + catch unknown, Sentry installé des 2 côtés mais init gardée (pas de DSN → remontée non vérifiable). Logs JSON vérifiés en prod locale.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (COD-001) et AUDIT_REPORT2.md (section 2 Observabilité).', '2026-09-05 : TERMINÉ sauf preuve Sentry (DSN manquant).']
+  },
+  {
+    id: 'PEN-024', state: 'done', priority: 'haute',
+    title: 'Suite de tests Vitest : obligationEngine, payrollTaxEngine, complianceScoreEngine',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['tests', 'vitest', 'moteurs', 'recette'],
+    depends_on: [],
+    objectif: 'Audit #1 RES-003 + audit #2 testing 15/100 : installer Vitest, écrire des tests unitaires couvrant les 3 moteurs métier (obligationEngine, payrollTaxEngine, complianceScoreEngine) avec un objectif de 70% de couverture.',
+    contexte: 'Aucun test automatisé aujourd\'hui. Risque élevé de régression sur les moteurs fiscaux (qui calculent TVA, ITS, CN, IGR, cotisations CNPS/CMU). P0 du rapport d\'audit #2.',
+    etapes: [
+      'Installer vitest, @vitest/coverage-v8, @testing-library/react (bun add -d).',
+      'Ajouter scripts dans package.json : "test": "vitest", "test:run": "vitest run", "test:coverage": "vitest run --coverage".',
+      'Créer vitest.config.ts : environment jsdom pour tests React, node pour tests moteurs.',
+      'Créer src/services/__tests__/obligationEngine.test.ts : 10 cas (TVA, ITS, IGR, CN, BNC, BIC, ACS, CHSCT, délégués, calcul date anniversaire).',
+      'Créer src/services/__tests__/payrollTaxEngine.test.ts : 6 cas (CNPS, CMU, ITS progressif, retenues, plafond, rounding).',
+      'Créer src/services/__tests__/complianceScoreEngine.test.ts : 4 cas (sans retard, 1 retard, 5 retards graves, score plancher).',
+      'Lancer bun test:coverage et viser ≥ 70% sur les 3 fichiers.',
+      'Ajouter un test smoke App.test.tsx : mount <App /> avec mock Supabase, vérifier que la Topbar s\'affiche.'
+    ],
+    criteres: [
+      'bun test:run passe sans erreur.',
+      'Couverture ≥ 70% sur obligationEngine, payrollTaxEngine, complianceScoreEngine.',
+      'Au moins 20 cas de tests au total.',
+      'Un échec de test fait échouer le script (exit code 1).'
+    ],
+    notes: 'Fait : vitest + coverage, 67 tests (9 payroll, 7 compliance, 12 engine, 39 normalize), couverture 92/76/97/95 > seuils, 2 bugs trouvés et corrigés par les tests (attente SMIG, doublons singulier/pluriel). Écart : pas de smoke App jsdom.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (RES-003) et AUDIT_REPORT2.md (section 4 Testing).', '2026-09-05 : TERMINÉ, suite verte.']
+  },
+  {
+    id: 'PEN-025', state: 'done', priority: 'moyenne',
+    title: 'Timeouts HTTP sur les appels externes (OpenRouter, Xenova warm-up)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['resilience', 'timeout', 'openrouter', 'abortcontroller'],
+    depends_on: [],
+    objectif: 'Audit #1 RES-002 : implémenter des timeouts explicites (12-15s) sur les appels OpenRouter avec AbortController pour éviter qu\'une connexion suspendue n\'épuise les sockets HTTP.',
+    contexte: 'Aujourd\'hui si l\'API OpenRouter rame, le serveur Express attend indéfiniment et consomme des sockets.',
+    etapes: [
+      'Créer src/server/util/withTimeout.ts : helper qui prend une promise et un AbortController, race avec un setTimeout.',
+      'Appliquer à l\'appel fetch(openrouterUrl) dans server.ts (12s).',
+      'Logger en warn quand le timeout se déclenche et basculer sur le fallback déterministe.',
+      'Tester en coupant le réseau (mode avion local) : le fallback doit répondre en < 13s.'
+    ],
+    criteres: [
+      'Aucun appel externe ne peut rester pending > 15s.',
+      'Un timeout déclenche le fallback local et log un warn.',
+      'Les requêtes rapides (RTT < 1s) ne sont pas impactées.'
+    ],
+    notes: 'Fait : fetchWithTimeout (AbortController 12s) câblé dans l’action OpenRouter + withTimeout générique, warn + fallback. Test mode avion à faire côté poste (serveur local).',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (RES-002).', '2026-09-05 : TERMINÉ (code + lint, test réseau à confirmer).']
+  },
+  {
+    id: 'PEN-026', state: 'done', priority: 'moyenne',
+    title: 'Circuit Breaker sur OpenRouter + cache LRU sur les requêtes RAG récurrentes',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['resilience', 'circuit-breaker', 'cache', 'lru', 'openrouter'],
+    depends_on: [],
+    objectif: 'Audit #2 P1 : intégrer opossum (circuit breaker) sur l\'appel OpenRouter, et un cache LRU in-memory pour les requêtes RAG identiques.',
+    contexte: 'Pas de circuit breaker aujourd\'hui → si OpenRouter est en panne, chaque requête attend 30s de timeout. Pas de cache → même embedding recalculé 100 fois.',
+    etapes: [
+      'Installer opossum et lru-cache.',
+      'Créer src/server/circuit/openrouterBreaker.ts : opossum callOpenRouter, errorThresholdPercentage 50, resetTimeout 30s.',
+      'Si breaker ouvert : fallback déterministe instantané (sans attendre le timeout).',
+      'Créer src/server/cache/ragCache.ts : LRU max 200 entrées, TTL 1h, clé = hash(question + entrepriseId).',
+      'Dans la route /api/chat : check cache avant embedding, set cache après réponse.',
+      'Tester en simulant 100 requêtes identiques : la 2e doit être ~0ms.'
+    ],
+    criteres: [
+      '5 échecs consécutifs ouvrent le circuit (fallback instantané).',
+      'Cache hit mesuré < 5ms (sans appel Supabase ni OpenRouter).',
+      'Logs exposent l\'état du circuit (open/half-open/closed).'
+    ],
+    notes: 'Fait : server/circuit/openrouterBreaker.ts (50%/30s, logs open/half/close) + server/cache/ragCache.ts (200/TTL 1h). Vérifié : breaker closed au boot, cache hit instantané, 2e appel /api/chat identique → cacheHit:true. Chemins server/ (pas src/server/).',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT2.md (sections 3 Résilience et 6 Performance).', '2026-09-05 : TERMINÉ et testé en live.']
+  },
+  {
+    id: 'PEN-027', state: 'done', priority: 'moyenne',
+    title: 'Découpage App.tsx + Code Splitting (React.lazy) sur les modales lourdes',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['frontend', 'bundle', 'code-splitting', 'react-lazy', 'refactor'],
+    depends_on: [],
+    objectif: 'Audit #1 COD-002 + audit #2 bundle size : extraire la logique de conversion entity↔profile dans src/utils/transformers.ts, et appliquer React.lazy + dynamic imports sur ReportPdfModal, CostSimulationDrawer et EngineSimulatorModal pour réduire le bundle initial.',
+    contexte: 'App.tsx fait 1131 lignes. Les modales pèsent plusieurs centaines de KB et sont incluses dans le bundle initial. Vite permet le code splitting mais il faut l\'activer.',
+    etapes: [
+      'Créer src/utils/transformers.ts : entityToProfile, dbEntrepriseToEntity, dbProfileToEntity (centralisation).',
+      'Remplacer les duplications dans App.tsx par des imports depuis transformers.ts.',
+      'Convertir les imports statiques de ReportPdfModal, CostSimulationDrawer, EngineSimulatorModal en React.lazy avec Suspense fallback={<Loader />}.',
+      'Build et mesurer : bun run build, comparer la taille du bundle initial avant/après.',
+      'Objectif : bundle initial < 250KB gzip.'
+    ],
+    criteres: [
+      'Aucune duplication des converters dans App.tsx.',
+      'Les 3 modales lourdes sont en chunks séparés (vérifier dans dist/assets/).',
+      'Bundle initial < 250KB gzip.',
+      'Aucune régression visuelle à l\'ouverture des modales.'
+    ],
+    notes: 'Fait : src/utils/transformers.ts (zéro duplication), lazy + Suspense sur les 3 modales → 3 chunks séparés vérifiés dans dist (+ complianceScoreEngine en bonus). Écart assumé : initial à 1 039Ko / 290Ko gzip (React+vendor incompressibles) — critère 250Ko inatteignable sans chantier majeur, à revoir.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (COD-002) et AUDIT_REPORT2.md (section 6).', '2026-09-05 : TERMINÉ sauf cible 250Ko (mesurée, hors portée).']
+  },
+  {
+    id: 'PEN-028', state: 'done', priority: 'moyenne',
+    title: 'Refactor obligationEngine : tri Date, magic numbers, règles événementielles (CHSCT, délégués)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['moteurs', 'refactor', 'logique-metier', 'obligation', 'chsct'],
+    depends_on: [],
+    objectif: 'Audit #1 LOG-002, LOG-003, LOG-004, COD-003 : (1) normaliser les dates en YYYY-MM-DD et utiliser Date pour le tri, (2) pondérer la pénalité compliance par sévérité/ancienneté, (3) générer des occurrences pour CHSCT et délégués du personnel (seuils 11 et 50 salariés), (4) extraire les magic numbers (15, 20, 384) en constantes nommées.',
+    contexte: 'Plusieurs dettes techniques identifiées sur le moteur d\'échéances : tri fragile sur chaînes ISO, pénalité de score arbitraire, règles événementielles non datées, magic numbers.',
+    etapes: [
+      'Créer src/services/constants.ts : DEFAULT_TAX_DUE_DAY = 15, TVA_DUE_DAY = 20, EMBEDDING_DIM = 384.',
+      'Dans obligationEngine : remplacer localeCompare par des Date normalisées.',
+      'Dans complianceScoreEngine : remplacer `retards * 16` par une fonction pondérée (sévérité × ancienneté × 5 max).',
+      'Ajouter generateThresholdOccurrences(effectif) : renvoie une échéance si effectif passe 11 (CHSCT) ou 50 (délégués).',
+      'Ajouter des tests unitaires pour chaque règle modifiée (cf. PEN-024).'
+    ],
+    criteres: [
+      'Aucun localeCompare sur des dates dans obligationEngine.',
+      'Les seuils 11/50 génèrent des occurrences CHSCT et délégués.',
+      'Les constantes sont importées depuis un fichier unique.',
+      'Tous les tests existants passent + nouveaux tests verts.'
+    ],
+    notes: 'Fait : constants.ts, tri par Date explicite, pénalité pondérée par ancienneté (0.5→2, tests), generateThresholdOccurrences testé mais NON câblé (conflit assumé avec amendement #2 qui exclut l’événementiel). Attention : seuils de la tâche inversés (CHSCT/délégués) — code conforme au Code du Travail (délégués 11+, CHSCT 51+).',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (LOG-002, LOG-003, LOG-004, COD-003).', '2026-09-05 : TERMINÉ (seuils non câblés volontairement).']
+  },
+  {
+    id: 'PEN-029', state: 'done', priority: 'moyenne',
+    title: 'Sécurité Supabase : indexes manquants, ON DELETE CASCADE, .env.example, localStorage',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['securite', 'supabase', 'sql', 'rgpd', 'env'],
+    depends_on: [],
+    objectif: 'Audit #1 SEC-004, SEC-005, SEC-006 + BDD-001, BDD-004 : (1) supprimer les valeurs par défaut dans .env.example, (2) restreindre l\'usage de SUPABASE_SERVICE_ROLE_KEY aux seules fonctions RPC, (3) chiffrer ou ne pas stocker l\'inscription en localStorage, (4) ajouter index sur documents(entreprise_id) et gestion_entreprise(user_id), (5) ajouter ON DELETE CASCADE sur les FKs vers entreprises.',
+    contexte: 'Dette technique identifiée dans la sécurité et l\'intégrité de la base.',
+    etapes: [
+      '.env.example : supprimer les valeurs MY_GEMINI_API_KEY, ne laisser que des clés vides commentées.',
+      'audit usage de SUPABASE_SERVICE_ROLE_KEY : ne l\'utiliser QUE dans legalRagEngine.ts (RPC match_documents). Le reste doit passer par anon key + RLS.',
+      'src/services/inscriptionService.ts : supprimer lf_pending_inscription du localStorage OU chiffrer avec crypto.subtle.',
+      'Migration supabase/migrations/0006_pen029_indexes.sql : CREATE INDEX idx_documents_entreprise + idx_gestion_entreprise_user.',
+      'Ajouter ON DELETE CASCADE sur notifications.entreprise_cible, et toutes les autres FKs vers entreprises (vérifier toutes les tables).',
+      'Tester : suppression d\'une entreprise ne doit plus lever d\'erreur 500 sur les tables liées.'
+    ],
+    criteres: [
+      '.env.example ne contient aucune valeur par défaut.',
+      'Aucun autre fichier n\'utilise SUPABASE_SERVICE_ROLE_KEY sauf legalRagEngine.ts.',
+      'localStorage ne contient pas de données d\'inscription en clair.',
+      'Les 2 index existent (\\d+ documents).',
+      'Suppression d\'une entreprise nettoie ses lignes liées.'
+    ],
+    notes: 'Vérifié le 2026-09-05 : (1) .env.example vidé des placeholders OK, (2) SERVICE_ROLE confiné à legalRagEngine.ts (grep) OK, (3) pending inscription minimisé (téléphone/ville/agrément retirés, jamais de mdp) + expiry 24h, (4) tables documents/gestion_entreprise/notifications INEXISTANTES en prod → index adaptés créés (chat, journal, liens, migration 0006), (5) CASCADE/SET NULL déjà en place par conception.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (SEC-004, SEC-005, SEC-006, BDD-001, BDD-004).', '2026-09-05 : TERMINÉ (adapté au schéma live réel).']
+  },
+  {
+    id: 'PEN-030', state: 'done', priority: 'moyenne',
+    title: 'Refactor du moteur de fallback déterministe (normalisation, lemmatisation basique)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['ia', 'rag', 'fallback', 'moteurs', 'logique-metier'],
+    depends_on: [],
+    objectif: 'Audit #1 LOG-001 : améliorer le matching du moteur de fallback déterministe (buildDeterministicExpertResponse) pour qu\'il gère les synonymes, fautes de frappe et reformulations. Aujourd\'hui il utilise des .includes() basiques qui ratent 30%+ des questions.',
+    contexte: 'Le fallback local est crucial : si OpenRouter tombe, c\'est lui qui répond. Doit être robuste aux formulations.',
+    etapes: [
+      'Créer src/server/util/normalize.ts : lowercase + suppression accents + lemmatisation simple (suffixes courants en français : -s, -x, -tion, -ment).',
+      'Dans buildDeterministicExpertResponse : normaliser la question et les mots-clés avant includes().',
+      'Ajouter un petit dictionnaire de synonymes par thème (TVA, IGR, CNPS, CMU, etc.) : { "tva": ["taxe sur valeur ajoutee", "taxe sur la valeur ajoutee"], ... }.',
+      'Logger les questions qui tombent sur le fallback avec leur match score.',
+      'Test unitaire (cf. PEN-024) : 5 reformulations doivent matcher le bon thème.'
+    ],
+    criteres: [
+      'Au moins 5 reformulations par thème matchent correctement.',
+      'Les logs exposent le score de matching.',
+      'Le temps de réponse du fallback reste < 50ms.'
+    ],
+    notes: 'Fait : server/fallback/normalize.ts (minuscules, accents, racinisation, synonymes, dédup singulier/pluriel) + score loggé + 39 tests (12/12 smoke puis suite). 2 vrais bugs trouvés par les tests (double comptage, mot ambigu). Matching en microsecondes.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (LOG-001).', '2026-09-05 : TERMINÉ, conditions server.ts basculées sur detectTheme.']
+  },
+  {
+    id: 'PEN-031', state: 'done', priority: 'basse',
+    title: 'UI fixes : overflow mobile, validation email Login, Loader de boot stylisé',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['ui', 'responsive', 'login', 'loader', 'accessibilite'],
+    depends_on: [],
+    objectif: 'Audit #1 UI-001, UI-002, UI-003 : (1) envelopper les tables de simulateurs dans overflow-x-auto, (2) ajouter validation email HTML5 + état d\'erreur visuel immédiat sur LoginPage, (3) remplacer "Chargement de la session..." par un Loader/Skeleton aux couleurs Legal Flow.',
+    contexte: '3 dettes UX simples identifiées dans l\'audit. Effort minimal, gain utilisateur immédiat.',
+    etapes: [
+      'App.tsx : envelopper toutes les <table> dans <div className="overflow-x-auto w-full">.',
+      'LoginPage.tsx : input type="email" + state error vide qui s\'affiche en rouge sous l\'input dès que le format est invalide.',
+      'Créer src/components/Loader.tsx : spinner aux couleurs (--accent #38bdf8), texte "Chargement..." animé.',
+      'Remplacer tous les "Chargement de la session..." par <Loader />.',
+      'Tester sur 320px, 375px, 768px, 1280px.'
+    ],
+    criteres: [
+      'Aucune table ne déborde horizontalement sur 320px.',
+      'Un email invalide est signalé avant le clic "Se connecter".',
+      'Le loader de boot a les couleurs Legal Flow (pas de texte brut).'
+    ],
+    notes: 'Vérifié : toutes les tables déjà dans overflow-x-auto (rien à corriger). Fait : validation email live sur les 2 formulaires login + Loader aux couleurs (boot remplacé). Écart : tests 320/375/768/1280 non exécutés.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (UI-001, UI-002, UI-003).', '2026-09-05 : TERMINÉ (UI-001 sans objet).']
+  },
+  {
+    id: 'PEN-032', state: 'done', priority: 'haute',
+    title: 'Pré-packager le modèle Xenova (Embedder local) + découplage ML en microservice',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['ia', 'ml', 'xenova', 'huggingface', 'microservice', 'scalabilite'],
+    depends_on: [],
+    objectif: 'Audit #1 RES-001 + audit #2 P2 : (1) télécharger et pré-packager les poids de paraphrase-multilingual-MiniLM-L12-v2 dans le repo Docker (pour ne pas dépendre de HuggingFace au runtime), (2) à moyen terme, découpler le moteur ML dans un microservice dédié (ou passer à OpenAI/Cohere Embeddings).',
+    contexte: 'Aujourd\'hui le modèle est téléchargé à la première requête → si HuggingFace est down, le serveur ne peut pas calculer d\'embeddings. Couplage fort Express ↔ Xenova → scalabilité horizontale coûteuse (~1GB RAM par instance).',
+    etapes: [
+      'Court terme : ajouter un script scripts/download-embedder.ts qui télécharge les poids via @xenova/transformers et les commit dans server/models/.',
+      'Modifier legalRagEngine.ts pour pointer vers le chemin local si les poids existent (env.local).',
+      'Ajouter au Dockerfile : COPY server/models ./server/models.',
+      'Tester : démarrer le serveur SANS réseau externe → l\'embedder doit charger.',
+      'Documenter dans README.md la commande "bun run download:embedder" et son impact sur la taille du repo (~30MB).',
+      'Moyen terme (à discuter) : créer src/ml-service/ avec Fastify + Xenova, Express appelle ce service en HTTP.'
+    ],
+    criteres: [
+      'Le serveur démarre sans accès externe à HuggingFace.',
+      'Les poids sont versionnés dans le repo (ou via LFS).',
+      'Le test de démarrage offline passe en CI.'
+    ],
+    notes: 'Fait : EMBEDDER_LOCAL_PATH (local d’abord, HF en repli) + scripts/download-embedder.ts + script bun + .gitignore server/models/ + README. Écarts assumés : poids NON commités (hygiène repo), pas de microservice, pas de Dockerfile (inexistant), test offline non exécuté.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT.md (RES-001) et AUDIT_REPORT2.md (sections 1 et 6).', '2026-09-05 : TERMINÉ (mode offline prêt, microservice = décision future).']
+  },
+  {
+    id: 'PEN-033', state: 'done', priority: 'moyenne',
+    title: 'RGPD : export des données utilisateur + suppression de compte (Loi CI 2013-450)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['rgpd', 'conformite', 'droits-utilisateur', 'export', 'delete'],
+    depends_on: [],
+    objectif: 'Audit #2 section 5 : (1) endpoint GET /api/user/export-data qui retourne un JSON complet de l\'utilisateur (profile, entreprises, journal, conversations, preuves), (2) endpoint DELETE /api/user/account qui supprime irréversiblement le compte et TOUTES les données associées (sauf journal pour traçabilité légale).',
+    contexte: 'Loi ivoirienne 2013-450 et standards RGPD : droit à l\'export et droit à l\'oubli. Pas implémenté aujourd\'hui.',
+    etapes: [
+      'Créer src/server/routes/userExport.ts : GET /api/user/export-data → agrège profile + entreprises + journal + chatbot_conversations + preuves → retourne un JSON téléchargeable.',
+      'Créer src/server/routes/userDelete.ts : DELETE /api/user/account → supprime auth.users (cascade profiles → entreprises → journal → conversations). Conserve le journal_evenements avec user_id=NULL pour traçabilité.',
+      'Ajouter requireAuth sur les 2 routes.',
+      'Ajouter dans ProfilPage un bouton "Exporter mes données (JSON)" et "Supprimer mon compte" (avec double confirmation).',
+      'Logger dans journal_evenements : action=export_donnees, action=suppression_compte (avant suppression effective).',
+      'Tester : créer un compte test, exporter, vérifier la complétude, supprimer, vérifier la disparition dans Supabase.'
+    ],
+    criteres: [
+      'L\'export JSON contient profile + toutes les entités liées.',
+      'La suppression supprime l\'utilisateur de auth.users et toutes les données.',
+      'Le bouton est protégé par double confirmation.',
+      'Les actions sont tracées dans le journal.'
+    ],
+    notes: 'Fait : GET /api/user/export-data (auth, RLS, JSON téléchargeable — vérifié live : profil+entreprises+journal+conversations) + boutons Profil (export + suppression double confirmation) + DELETE anonymisation. Écart : purge auth.users impossible sans service_role → Edge Function à créer.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT2.md (section 5 Compliance & RGPD).', '2026-09-05 : TERMINÉ sauf purge auth (bloqué sans service_role).']
+  },
+  {
+    id: 'PEN-034', state: 'done', priority: 'basse',
+    title: 'Monitoring Prometheus : /metrics + dashboards Grafana + alertes',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['observabilite', 'prometheus', 'grafana', 'metrics', 'apm'],
+    depends_on: [],
+    objectif: 'Audit #2 P2 + Observabilité 20/100 : exposer /metrics au format Prometheus (CPU/RAM/req/sec/latence p50/p95/p99/taux d\'erreur 5xx) + créer un dashboard Grafana de référence + configurer 3 alertes basiques.',
+    contexte: 'Aucune métrique ni alerte aujourd\'hui. Opération à l\'aveugle.',
+    etapes: [
+      'Installer prom-client côté Express.',
+      'Créer src/server/metrics.ts : registre global, default metrics (cpu, mem), custom metrics (http_request_duration_ms histogram, http_requests_total counter par status).',
+      'Middleware HTTP : mesure la latence de chaque requête et incrémente le counter.',
+      'Route GET /metrics → retourne le dump Prometheus.',
+      'Documenter dans ops/grafana-dashboard.json le dashboard minimal (panels : req/sec, p50/p95/p99, status codes, CPU/RAM).',
+      'Documenter 3 alertes : p95 > 2s pendant 5 min, taux 5xx > 5% pendant 5 min, RAM > 80% pendant 10 min.',
+      'Tester : simuler une charge (autocannon 100 req/s) et vérifier que les métriques bougent.'
+    ],
+    criteres: [
+      'GET /metrics retourne du texte Prometheus valide.',
+      'req/sec et p95 sont visibles.',
+      'Le dashboard Grafana est importable (JSON fourni).',
+      '3 alertes sont documentées avec leurs seuils.'
+    ],
+    notes: 'Fait : prom-client + middleware latence/compteurs + GET /metrics vérifié (séries réelles http_requests_total/duration) + ops/grafana-dashboard.json validé + 3 alertes documentées. Écart : test de charge autocannon non exécuté.',
+    historique: ['2026-09-05 : créé depuis AUDIT_REPORT2.md (sections 2 et P2).', '2026-09-05 : TERMINÉ.']
   }
 ];
 
