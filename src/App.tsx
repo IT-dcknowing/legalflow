@@ -34,6 +34,7 @@ import {
   type DbEntreprise,
 } from './services/supabaseClient';
 import { LoginPage } from './components/LoginPage';
+import { logConnexion, logDeconnexion } from './services/journalEvents';
 import { ObligationEngine } from './services/obligationEngine';
 import {
   diffDays,
@@ -320,7 +321,7 @@ export function App() {
       setProfile(entityToProfile(target));
     }
     await loadChatHistory(userId);
-    await logEvent('connexion', undefined, undefined, { email: profile.email || email });
+    await logConnexion(profile.email || email);
   };
 
   React.useEffect(() => {
@@ -374,6 +375,7 @@ export function App() {
     chatConvId.current = null;
     setChatInitial(null);
     sessionLoadedFor.current = null;
+    await logDeconnexion();
     if (supabase) await supabase.auth.signOut();
     setAuthUserId(null);
     setDbProfile(null);

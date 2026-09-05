@@ -804,7 +804,7 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-011 car les 3 routes doivent d\'abord exister dans le type PageId et la Sidebar.']
   },
   {
-    id: 'PEN-013', state: 'pending', priority: 'haute',
+    id: 'PEN-013', state: 'done', priority: 'haute',
     title: 'SQL — Policies RLS profiles_insert + profiles_update + events journal manquants',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'sql', 'rls', 'journal', 'securite'],
@@ -828,8 +828,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       '6 nouveaux events journal sont définis et câblés dans le code.',
       'Connexion et déconnexion tracent bien un event dans la table.'
     ],
-    notes: 'ATTENTION à la récursion RLS : profiles_select appelle get_my_role() qui lit profiles. profiles_update ne doit PAS appeler get_my_role() (laisse l\'UPDATE self passer si role+statut inchangés). La policy admin update est séparée pour éviter cette récursion.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §6 (sécurité RLS) et §7 (events journal). Tâche fondatrice, doit être faite AVANT PEN-015/016/018.']
+    notes: 'Fait le 2026-09-05 (commit à venir) : colonnes statut/contacts ajoutées, policies insert/update/update_admin, trigger forbid_role_statut_escalation (le WITH CHECK seul ne bloque rien — NEW=NEW — leçon vérifiée par tests), helpers journalEvents.ts (6 events §7) câblés (logConnexion/logDeconnexion), SQL tracé dans supabase/migrations/0001-0003. Écart : supabaseSchema.sql legacy non touché (conflit de schéma).',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §6 (sécurité RLS) et §7 (events journal). Tâche fondatrice, doit être faite AVANT PEN-015/016/018.', '2026-09-05 : TERMINÉ. Batterie API : insert super_admin 403, auto-promotion 400, admin OK, pas de récursion.']
   },
   {
     id: 'PEN-014', state: 'pending', priority: 'haute',
