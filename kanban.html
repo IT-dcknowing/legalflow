@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legal Flow — Kanban Tâches</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-2: #1e293b;
+    --bg-3: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #38bdf8;
+    --accent-2: #0ea5e9;
+    --green: #22c55e;
+    --yellow: #eab308;
+    --orange: #f97316;
+    --red: #ef4444;
+    --border: #334155;
+    --card: #1e293b;
+    --card-hover: #273449;
+    --shadow: 0 10px 25px -5px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+  header {
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header h1 .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+  }
+  header .meta {
+    color: var(--text-dim);
+    font-size: 13px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .btn {
+    background: var(--accent-2);
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s;
+  }
+  .btn:hover { background: var(--accent); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+    background: var(--bg-3);
+  }
+  .btn-danger { background: var(--red); }
+  .btn-danger:hover { background: #dc2626; }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    padding: 24px;
+    align-items: start;
+  }
+  @media (max-width: 1100px) {
+    .board { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .board { grid-template-columns: 1fr; }
+  }
+  .column {
+    background: var(--bg-2);
+    border-radius: 10px;
+    padding: 12px;
+    min-height: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .column-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .column-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .column-count {
+    background: var(--bg-3);
+    color: var(--text);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .card:hover {
+    background: var(--card-hover);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+  .card.dragging { opacity: 0.4; }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+  .card-id {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: monospace;
+    margin-bottom: 4px;
+  }
+  .card-meta {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+    background: var(--bg-3);
+    color: var(--text-dim);
+  }
+  .priority {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .priority-haute { background: rgba(239,68,68,0.2); color: var(--red); }
+  .priority-moyenne { background: rgba(234,179,8,0.2); color: var(--yellow); }
+  .priority-basse { background: rgba(34,197,94,0.2); color: var(--green); }
+  .dropzone {
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .dropzone.drag-over {
+    background: rgba(56, 189, 248, 0.05);
+    border-radius: 8px;
+    outline: 2px dashed var(--accent);
+    outline-offset: -4px;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 16px;
+    overflow-y: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-width: 760px;
+    width: 100%;
+    box-shadow: var(--shadow);
+  }
+  .modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .modal-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    flex: 1;
+  }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .modal-close:hover { background: var(--bg-3); color: var(--text); }
+  .modal-body {
+    padding: 24px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .modal-section {
+    margin-bottom: 24px;
+  }
+  .modal-section:last-child { margin-bottom: 0; }
+  .modal-section h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .modal-section p, .modal-section li {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .modal-section ul, .modal-section ol {
+    padding-left: 20px;
+    margin: 6px 0;
+  }
+  .modal-section li { margin-bottom: 4px; }
+  .modal-section code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    font-family: monospace;
+  }
+  .modal-section pre {
+    background: var(--bg);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+    margin: 8px 0;
+  }
+  .modal-section pre code { padding: 0; background: none; }
+  .modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+  .modal-meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--bg-3);
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+  .state-pill {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .state-pill.active { background: rgba(56,189,248,0.2); color: var(--accent); }
+  .state-pill.pending { background: rgba(148,163,184,0.2); color: var(--text-dim); }
+  .state-pill.done { background: rgba(34,197,94,0.2); color: var(--green); }
+  .state-pill.backlog { background: rgba(249,115,22,0.2); color: var(--orange); }
+  .empty {
+    color: var(--text-dim);
+    text-align: center;
+    font-size: 13px;
+    padding: 24px 8px;
+    font-style: italic;
+  }
+  .new-card-form {
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+  .new-card-form input, .new-card-form textarea {
+    width: 100%;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-family: inherit;
+  }
+  .new-card-form textarea { resize: vertical; min-height: 60px; }
+  .new-card-form .row { display: flex; gap: 6px; }
+  .new-card-form .row > * { flex: 1; }
+  details summary {
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+    list-style: none;
+  }
+  details summary:hover { background: var(--bg-3); color: var(--text); }
+  details[open] summary { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot"></span> Legal Flow — Kanban Tâches</h1>
+  <div class="meta">
+    <span id="taskCount">0 tâches</span>
+    <button class="btn btn-ghost" onclick="exportJSON()">Exporter JSON</button>
+    <button class="btn btn-ghost" onclick="importJSON()">Importer</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none" onchange="handleImport(event)">
+  </div>
+</header>
+
+<main class="board">
+  <section class="column" data-state="backlog">
+    <div class="column-header">
+      <div class="column-title">💡 Backlog <span class="column-count" id="count-backlog">0</span></div>
+    </div>
+    <details class="new-card-form">
+      <summary>+ Ajouter une idée</summary>
+      <input type="text" placeholder="Titre de la tâche" id="new-title-backlog">
+      <div class="row">
+        <select id="new-prio-backlog">
+          <option value="moyenne">Priorité moyenne</option>
+          <option value="haute">Priorité haute</option>
+          <option value="basse">Priorité basse</option>
+        </select>
+        <button class="btn" onclick="addCard('backlog')">Créer</button>
+      </div>
+    </details>
+    <div class="dropzone" data-state="backlog" id="col-backlog"></div>
+  </section>
+
+  <section class="column" data-state="pending">
+    <div class="column-header">
+      <div class="column-title">📋 À faire <span class="column-count" id="count-pending">0</span></div>
+    </div>
+    <details class="new-card-form">
+      <summary>+ Ajouter une tâche</summary>
+      <input type="text" placeholder="Titre" id="new-title-pending">
+      <div class="row">
+        <select id="new-prio-pending">
+          <option value="haute">Haute</option>
+          <option value="moyenne" selected>Moyenne</option>
+          <option value="basse">Basse</option>
+        </select>
+        <button class="btn" onclick="addCard('pending')">Créer</button>
+      </div>
+    </details>
+    <div class="dropzone" data-state="pending" id="col-pending"></div>
+  </section>
+
+  <section class="column" data-state="active">
+    <div class="column-header">
+      <div class="column-title">🔥 En cours <span class="column-count" id="count-active">0</span></div>
+    </div>
+    <div class="dropzone" data-state="active" id="col-active"></div>
+  </section>
+
+  <section class="column" data-state="done">
+    <div class="column-header">
+      <div class="column-title">✅ Terminé <span class="column-count" id="count-done">0</span></div>
+    </div>
+    <div class="dropzone" data-state="done" id="col-done"></div>
+  </section>
+</main>
+
+<div class="modal-backdrop" id="modal" onclick="if(event.target===this) closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2 id="modal-title"></h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer">
+      <div class="modal-meta" id="modal-meta"></div>
+      <div>
+        <button class="btn btn-ghost" onclick="deleteCard()">Supprimer</button>
+        <button class="btn" onclick="closeModal()">Fermer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'legal-flow-tasks-v1';
+
+const DEFAULT_TASKS = [
+  {
+    id: 'ACT-001', state: 'active', priority: 'haute',
+    title: 'Brancher le frontend sur l’API Laravel (au lieu des mockData)',
+    created: '2026-09-04', updated: '2026-09-05',
+    tags: ['frontend', 'api', 'laravel', 'react'],
+    depends_on: [],
+    objectif: 'Remplacer la consommation de mockData.ts par de vrais appels à l’API Laravel 12 déjà en place, dans App.tsx et tous ses enfants.',
+    contexte: 'Frontend React 19 + Vite dans ../legal-flow/. API Laravel 12 dans ../legal-flow/api/ (modèles, migrations, seeders, routes, contrôleurs déjà créés). État actuel : App.tsx importe mockData.ts (entreprises, échéances, etc.) — c’est figé. Authentification encore mockée via RoleSwitcher → chantier parallèle (voir PEN-003 / PEN-004 / PEN-005).',
+    etapes: [
+      'Auditer toutes les imports de mockData dans src/.',
+      'Créer un service api.ts (ou services/laravelApi.ts) qui lit VITE_API_BASE_URL, expose des fonctions par ressource (fetchEntreprises, fetchEcheances, fetchVeille…), gère le Bearer token.',
+      'Remplacer les useState(initial = mockData.…) par des useEffect qui chargent depuis l’API.',
+      'Afficher des états de chargement + erreur honnêtement (pas de fallback silencieux).',
+      'Documenter dans le README comment lancer Laravel + Vite ensemble.'
+    ],
+    criteres: [
+      'Aucun import de mockData dans src/ sauf un seul fichier d’export rétrocompatible (ou supprimé).',
+      'npm run dev charge les données depuis Laravel.',
+      'Une erreur API affiche un message clair (pas de crash blanc).',
+      'Le RoleSwitcher reste fonctionnel le temps que PEN-003/004/005 ne soient pas terminés.'
+    ],
+    notes: 'Le seed de conformité ivoirienne (ComplianceSeeder) doit être lancé dans Laravel pour que les données existent. Voir ../legal-flow/README.md pour les commandes de lancement.',
+    historique: [
+      '2026-09-04 : tâche créée, passée En cours côté Notion, jamais terminée.',
+      '2026-09-05 : migration vers ce Kanban. Toujours active. Pas de travail concret depuis le 4 sept.'
+    ]
+  },
+  {
+    id: 'PEN-001', state: 'pending', priority: 'haute',
+    title: 'Créer le schéma SQL, les policies RLS et le bucket preuves',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'sql', 'rls', 'backend', 'fondations'],
+    depends_on: [],
+    objectif: 'Poser le fond de données Supabase : enum user_role, 6 tables, RLS par niveau, bucket privé preuves avec ses policies. Aucun code app ici — uniquement la base.',
+    contexte: 'Première brique du chantier « Connexion & utilisateurs réels ». Sans cette base, on ne peut pas créer de comptes, faire d’auth, ni persister d’historique. C’est aussi la fondation du mode multi-niveaux (HQ / Portefeuille / Entreprise).',
+    etapes: [
+      'Exécuter le SQL (création du type user_role, des 6 tables, des indexes éventuels).',
+      'Activer RLS sur toutes les tables applicatives + créer la fonction get_my_role().',
+      'Créer les policies : profiles_select, entreprises_select + policies insert/update miroir pour Niv. 2 / Niv. 3.',
+      'Créer les policies chat_own (chatbot_conversations) et journal_select/journal_insert (journal_evenements).',
+      'Créer le bucket privé preuves (public=false) et ses 2 policies storage.',
+      'Vérifier qu’un SELECT anonyme sur profiles renvoie 0 ligne (RLS active).'
+    ],
+    sql: `create type user_role as enum ('super_admin','gestionnaire','entreprise');
+
+create table cabinets (id uuid primary key default gen_random_uuid(), raison_sociale text not null, ville text, agrement text, created_at timestamptz not null default now());
+create table entreprises (id uuid primary key default gen_random_uuid(), raison_sociale text not null, rccm text, forme_juridique text, secteur text, regime_fiscal text, effectif int, ca_estime numeric, profil_complet boolean not null default false, created_at timestamptz not null default now());
+create table cabinet_entreprises (cabinet_id uuid not null references cabinets(id) on delete cascade, entreprise_id uuid not null references entreprises(id) on delete cascade, primary key (cabinet_id, entreprise_id));
+create table profiles (id uuid primary key references auth.users(id) on delete cascade, role user_role not null default 'entreprise', nom_complet text, email text, cabinet_id uuid references cabinets(id) on delete set null, entreprise_id uuid references entreprises(id) on delete set null, created_at timestamptz not null default now());
+create table chatbot_conversations (id uuid primary key default gen_random_uuid(), user_id uuid not null references profiles(id) on delete cascade, titre text, messages jsonb not null default '[]', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table journal_evenements (id bigint generated always as identity primary key, user_id uuid references profiles(id) on delete set null, action text not null, entite_type text, entite_id uuid, metadata jsonb not null default '{}', created_at timestamptz not null default now());
+
+alter table profiles, entreprises, cabinet_entreprises, chatbot_conversations, journal_evenements enable row level security;
+
+create or replace function get_my_role() returns user_role language sql stable security definer as $$ select role from profiles where id = auth.uid() $$;
+
+create policy profiles_select on profiles for select using (id = auth.uid() or get_my_role() = 'super_admin' or (get_my_role() = 'gestionnaire' and cabinet_id = (select cabinet_id from profiles where id = auth.uid())));
+
+create policy entreprises_select on entreprises for select using (
+  get_my_role() = 'super_admin'
+  or (get_my_role() = 'entreprise' and id = (select entreprise_id from profiles where id = auth.uid()))
+  or (get_my_role() = 'gestionnaire' and id in (select ce.entreprise_id from cabinet_entreprises ce where ce.cabinet_id = (select cabinet_id from profiles where id = auth.uid()))));
+
+create policy chat_own on chatbot_conversations for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy journal_select on journal_evenements for select using (user_id = auth.uid() or get_my_role() = 'super_admin' or (get_my_role() = 'gestionnaire' and entite_id in (select ce.entreprise_id from cabinet_entreprises ce where ce.cabinet_id = (select cabinet_id from profiles where id = auth.uid()))));
+create policy journal_insert on journal_evenements for insert with check (user_id = auth.uid());
+
+insert into storage.buckets (id, name, public) values ('preuves','preuves', false) on conflict (id) do nothing;
+create policy preuves_insert on storage.objects for insert with check (bucket_id = 'preuves' and auth.role = 'authenticated');
+create policy preuves_select on storage.objects for select using (bucket_id = 'preuves' and auth.role = 'authenticated');`,
+    criteres: [
+      'Les 6 tables existent + le type user_role.',
+      'RLS est enable sur toutes les tables applicatives.',
+      'Le bucket preuves existe, est privé, et ses 2 policies fonctionnent.',
+      'Un SELECT * FROM profiles avec un anon key retourne 0 ligne.'
+    ],
+    notes: 'À exécuter via le SQL Editor du dashboard Supabase (plus simple que CLI pour une première fois). Garder le SQL complet dans un fichier supabase/migrations/0001_init.sql.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+  },
+  {
+    id: 'PEN-002', state: 'pending', priority: 'haute',
+    title: 'Créer les comptes initiaux et les rattachements',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'auth', 'comptes', 'fondations'],
+    depends_on: ['PEN-001'],
+    objectif: 'Créer les 3 comptes initiaux via auth.admin.createUser, insérer leurs profils, créer le cabinet et l’entreprise, et lier le cabinet à ses 5 entreprises dans cabinet_entreprises.',
+    contexte: 'Dépend directement de PEN-001. C’est l’étape qui donne vie à la base : 3 utilisateurs qui deviendront les comptes de démo pour valider toute la chaîne.',
+    comptes: [
+      { email: 'aminata@legalflow.ci', role: 'super_admin', rattachement: 'Équipe Legal Flow' },
+      { email: 'cabinet@auditconseils.ci', role: 'gestionnaire', rattachement: 'Cabinet Audit & Conseils CI' },
+      { email: 'alex@koffibtp.ci', role: 'entreprise', rattachement: 'Établissements Koffi BTP SARL' }
+    ],
+    etapes: [
+      'Créer le cabinet "Audit & Conseils CI" dans cabinets.',
+      'Créer l’entreprise Koffi BTP + 4 autres (5 au total) dans entreprises.',
+      'auth.admin.createUser pour chacun des 3 emails (email_confirm: true).',
+      'Insérer les 3 lignes dans profiles (id=auth.user.id, role, nom_complet, email, cabinet_id ou entreprise_id).',
+      'Remplir cabinet_entreprises : lier le cabinet aux 5 entreprises.',
+      'Vérifier la connexion pour chaque compte avant de passer à PEN-003.'
+    ],
+    criteres: [
+      'Les 3 utilisateurs existent dans auth.users et leurs profils pointent vers le bon cabinet/entreprise.',
+      'Le cabinet est lié à 5 entreprises via cabinet_entreprises.',
+      'Les 3 logins fonctionnent et renvoient le bon role dans profiles.'
+    ],
+    notes: 'Idéalement scripter tout ça dans supabase/seed.sql (idempotent). 4 entreprises fictives plausibles : Sotra Services SARL, AgroTrans CI, Boulangerie Adjame SARL, LaguneTech CI — à valider.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+  },
+  {
+    id: 'PEN-003', state: 'pending', priority: 'haute',
+    title: 'Page de connexion réelle + AuthContext',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'auth', 'frontend', 'react'],
+    depends_on: ['PEN-001', 'PEN-002'],
+    objectif: 'Une seule page de connexion pour les 3 niveaux : supabase.auth.signInWithPassword({ email, password }). AuthContext React qui hydrate la session, lit profiles.role + cabinet_id + entreprise_id.',
+    contexte: 'Aujourd’hui le frontend simule l’auth via RoleSwitcher (mock). On remplace par un vrai flux.',
+    etapes: [
+      'Créer src/contexts/AuthContext.tsx : onAuthStateChange, getSession au mount, fetch du profile.',
+      'Créer la page /login : formulaire email + password, bouton Se connecter, gestion d’erreur.',
+      'Brancher l’AuthProvider au plus haut de App.tsx.',
+      'Vérifier que Supabase persiste bien la session.',
+      'Logger chaque connexion dans journal_evenements (action=connexion).'
+    ],
+    criteres: [
+      'Un seul formulaire de login accepte les 3 comptes de PEN-002.',
+      'Un mauvais mot de passe affiche une erreur explicite.',
+      'Recharger la page ne déconnecte pas l’utilisateur.',
+      'Une ligne est insérée dans journal_evenements à chaque connexion réussie.'
+    ],
+    notes: 'Pour le mot de passe oublié / signup : hors scope. Comptes créés par invitation. Le RoleSwitcher mock reste en place temporairement (utilisé par ACT-001) — supprimé dans PEN-004.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+  },
+  {
+    id: 'PEN-004', state: 'pending', priority: 'haute',
+    title: 'Routage par rôle après login',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'auth', 'frontend', 'react', 'routage'],
+    depends_on: ['PEN-003'],
+    objectif: 'Selon profiles.role, rediriger vers la bonne page d’entrée : super_admin → SuperAdminPage, gestionnaire → GestionnaireDashboardPage, entreprise → DashboardPage. Supprimer le RoleSwitcher mock.',
+    contexte: 'Suite directe de PEN-003. On a le profile hydraté, on envoie chacun chez soi.',
+    etapes: [
+      'Créer un composant ProtectedRoute qui redirige selon role.',
+      'Le routeur racine : si pas de session → /login ; sinon redirige vers la page d’entrée du rôle.',
+      'Retirer le RoleSwitcher mock de la Topbar ; ajouter un bouton Déconnexion.',
+      'Garder la Topbar/Sidebar actuelles mais masquer les entrées non autorisées selon le rôle.',
+      'Tester les 3 comptes : chacun atterrit sur SA page d’entrée.'
+    ],
+    criteres: [
+      'Chaque login atterrit sur SA page d’entrée avec le bon badge.',
+      'Le RoleSwitcher mock n’existe plus dans la codebase.',
+      'Le bouton Déconnexion fonctionne et réinitialise la session.',
+      'Les entrées de menu non autorisées sont masquées.'
+    ],
+    notes: 'En parallèle, ACT-001 doit s’assurer que ses endpoints acceptent les 3 rôles.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+  },
+  {
+    id: 'PEN-005', state: 'pending', priority: 'haute',
+    title: 'Câbler les 3 niveaux (HQ / Portefeuille / Entreprise) sur Supabase',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'frontend', 'dashboards', 'react'],
+    depends_on: ['PEN-004'],
+    objectif: 'Les 3 dashboards gardent leur design actuel mais lisent la base de données Supabase au lieu des données de démo. Chacun voit ses données uniquement (RLS).',
+    contexte: 'Regroupe ce qui était initialement prévu en 3 sous-tâches — fusion validée par l’utilisateur le 5 sept.',
+    pages: [
+      { niveau: 'Niv. 1 — super_admin', pages: 'SuperAdminPage', requete: 'SELECT * FROM entreprises (toutes), SELECT * FROM profiles' },
+      { niveau: 'Niv. 2 — gestionnaire', pages: 'GestionnaireDashboardPage, GestionnaireEntreprisesPage', requete: 'SELECT … FROM entreprises JOIN cabinet_entreprises WHERE cabinet_id = mon_cabinet' },
+      { niveau: 'Niv. 3 — entreprise', pages: 'DashboardPage, EcheancierPage, DocumentsPage, etc.', requete: 'SELECT * FROM entreprises WHERE id = mon_entreprise_id' }
+    ],
+    etapes: [
+      'Créer un service entreprisesService.ts : listEntreprises() qui s’appuie sur RLS.',
+      'SuperAdminPage (Niv. 1) : remplacer mockData.entreprises par le service.',
+      'GestionnaireDashboardPage + GestionnaireEntreprisesPage (Niv. 2) : idem.',
+      'DashboardPage + pages dépendantes (Niv. 3) : idem.',
+      'Retirer les imports de mockData.entreprises dans ces fichiers.',
+      'Ajouter un état de chargement + erreur explicite sur chaque page.'
+    ],
+    criteres: [
+      'Aucune page Niv. 1/2/3 n’importe plus mockData.entreprises.',
+      'Aminata (super_admin) voit les 5 entreprises.',
+      'Le cabinet voit les 5 mêmes entreprises.',
+      'Alex ne voit QUE Koffi BTP (test RLS fondamental).',
+      'Les pages affichent chargement + erreur honnêtement.'
+    ],
+    notes: 'Étape la plus visible pour l’utilisateur final. Tester les 3 comptes en parallèle.',
+    historique: ['2026-09-05 : créée depuis la migration. Fusion de 3 sous-tâches validée.']
+  },
+  {
+    id: 'PEN-006', state: 'pending', priority: 'moyenne',
+    title: 'Persister les conversations du chatbot',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'chatbot', 'frontend'],
+    depends_on: ['PEN-001', 'PEN-003'],
+    objectif: 'Sauvegarder chaque conversation du chatbot dans chatbot_conversations (user_id, titre, messages jsonb). Recharger l’historique à la reconnexion, par utilisateur.',
+    contexte: 'Sans persistance, les conversations se perdent à la déconnexion. Le RLS chat_own garantit l’isolation.',
+    etapes: [
+      'Créer un service chatService.ts : listConversations, createConversation, appendMessage, updateTitle.',
+      'Dans AssistantPanel : au mount, charger la dernière conversation (ou en créer une).',
+      'À chaque message user/assistant, persister via appendMessage (jsonb = [{role, contenu, ts}]).',
+      'Permettre de lister les anciennes conversations et basculer.',
+      'Tester : déconnecter, reconnecter, conversation intacte.'
+    ],
+    criteres: [
+      'Les messages sont stockés en base et retrouvés après reconnexion.',
+      'Chaque utilisateur ne voit que ses propres conversations (RLS chat_own).'
+    ],
+    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP). Contenu re-saisi ici depuis la mémoire.',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire (page Notion perdue).']
+  },
+  {
+    id: 'PEN-007', state: 'pending', priority: 'moyenne',
+    title: 'Logger les actions dans le journal',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'journal', 'service'],
+    depends_on: ['PEN-001', 'PEN-003'],
+    objectif: 'Logger les actions du logiciel (connexion, profil complété, quittance pointée, rapport généré, certification, veille publiée, relance envoyée) dans journal_evenements.',
+    contexte: 'C’est l’historique général : le Niv. 1 voit tout, le Niv. 2 voit ses clients, le Niv. 3 voit le sien. RLS déjà en place dans PEN-001.',
+    etapes: [
+      'Créer un service journalService.ts : logAction(userId, action, entiteType, entiteId, metadata).',
+      'Brancher dans tous les points d’action : signIn (déjà fait dans PEN-003), upload preuve (PEN-008), génération rapport, etc.',
+      'Créer une vue /journal pour afficher l’historique (filtré par RLS côté Supabase).',
+      'Tester la visibilité par niveau (chaque rôle ne voit que ce qui le concerne).'
+    ],
+    criteres: [
+      'Toutes les actions applicatives sont tracées.',
+      'Le Niv. 1 voit tout, le Niv. 2 seulement les actions de ses clients, le Niv. 3 seulement les siennes.',
+      'Aucune fuite cross-niveau (test RLS fondamental).'
+    ],
+    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+  },
+  {
+    id: 'PEN-008', state: 'pending', priority: 'moyenne',
+    title: 'Upload de preuves vers le bucket preuves',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'storage', 'upload'],
+    depends_on: ['PEN-001', 'PEN-007'],
+    objectif: 'Implémenter l’action « Pointer + Preuve » : l’entreprise dépose une quittance dans le bucket preuves/{entreprise_id}/{echeance_id}/{fichier}, et une ligne s’écrit dans journal_evenements.',
+    contexte: 'Bucket privé créé dans PEN-001, policies storage en place. Reste l’UI et le service d’upload.',
+    etapes: [
+      'Créer un service preuveService.ts : uploadPreuve(file, entrepriseId, echeanceId) qui retourne l’URL signée.',
+      'Créer un composant UploadPreuveButton.tsx dans l’échéancier ou la fiche échéance.',
+      'À l’upload, appeler journalService.logAction(action="quittance_pointee", entiteId=echeanceId).',
+      'Afficher la preuve dans la fiche avec un lien signé à courte durée de vie.',
+      'Tester les 3 niveaux : l’entreprise dépose, son cabinet + HQ peuvent lire (via l’UI).'
+    ],
+    criteres: [
+      'Le fichier arrive dans le bucket preuves au bon chemin.',
+      'Une ligne est écrite dans journal_evenements à chaque upload.',
+      'L’entreprise, son cabinet et le HQ peuvent lire la preuve (via UI).'
+    ],
+    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+  },
+  {
+    id: 'PEN-009', state: 'pending', priority: 'haute',
+    title: 'Validation finale des 6 critères d’acceptation',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['validation', 'tests', 'recette'],
+    depends_on: ['PEN-001', 'PEN-002', 'PEN-003', 'PEN-004', 'PEN-005', 'PEN-006', 'PEN-007', 'PEN-008'],
+    objectif: 'Tester les 6 critères d’acceptation du brief utilisateur de bout en bout. Aucun critère ne doit échouer.',
+    contexte: 'Critères définis dans le brief du 5 sept. ~02h45 (« CRITÈRES D’ACCEPTATION »).',
+    criteres: [
+      '1. Les 3 logins ouvrent chacun SON dashboard avec le bon badge ; un mauvais mot de passe est refusé.',
+      '2. Test RLS : connecté en tant qu’alex, SELECT * FROM entreprises ne renvoie QUE Koffi BTP.',
+      '3. Chatbot : la conversation est retrouvée intacte après déconnexion / reconnexion.',
+      '4. Journal : le Niv. 1 voit tout ; le Niv. 2 seulement les actions de ses clients ; le Niv. 3 seulement les siennes.',
+      '5. « Pointer + Preuve » : le fichier arrive dans le bucket preuves ET une ligne s’écrit dans le journal.',
+      '6. Déconnexion puis reconnexion : chacun retrouve son espace, rien n’est perdu.'
+    ],
+    etapes: [
+      'Préparer un script de test (Playwright ou simple Selenium) qui automatise les 6 scénarios.',
+      'Exécuter le script après chaque déploiement Supabase.',
+      'Documenter les résultats dans une section "Résumé de validation" sur la page Notion (ou ce Kanban).',
+      'Si un critère échoue : créer une sous-tâche corrective dans pending/ avant de marquer cette tâche done.'
+    ],
+    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+  }
+];
+
+let tasks = [];
+let currentTaskId = null;
+
+function load() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    try {
+      tasks = JSON.parse(stored);
+    } catch (e) {
+      tasks = DEFAULT_TASKS;
+      save();
+    }
+  } else {
+    tasks = JSON.parse(JSON.stringify(DEFAULT_TASKS));
+    save();
+  }
+}
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+}
+
+function escape(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function render() {
+  ['backlog', 'pending', 'active', 'done'].forEach(state => {
+    const col = document.getElementById('col-' + state);
+    col.innerHTML = '';
+    const filtered = tasks.filter(t => t.state === state);
+    if (filtered.length === 0) {
+      col.innerHTML = '<div class="empty">Aucune tâche</div>';
+    } else {
+      filtered.forEach(t => col.appendChild(createCardEl(t)));
+    }
+    document.getElementById('count-' + state).textContent = filtered.length;
+  });
+  const total = tasks.length;
+  document.getElementById('taskCount').textContent = total + ' tâche' + (total > 1 ? 's' : '');
+}
+
+function createCardEl(t) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.draggable = true;
+  div.dataset.id = t.id;
+  div.innerHTML = `
+    <div class="card-id">${escape(t.id)}</div>
+    <div class="card-title">${escape(t.title)}</div>
+    <div class="card-meta">
+      <span class="priority priority-${t.priority}">${escape(t.priority)}</span>
+      ${(t.tags || []).slice(0, 3).map(tag => `<span class="tag">${escape(tag)}</span>`).join('')}
+    </div>
+  `;
+  div.addEventListener('click', () => openModal(t.id));
+  div.addEventListener('dragstart', e => {
+    div.classList.add('dragging');
+    e.dataTransfer.setData('text/plain', t.id);
+  });
+  div.addEventListener('dragend', () => div.classList.remove('dragging'));
+  return div;
+}
+
+function openModal(id) {
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+  currentTaskId = id;
+  document.getElementById('modal-title').textContent = t.title;
+  const body = document.getElementById('modal-body');
+  const sections = [];
+  sections.push(`<div class="modal-section"><h3>🎯 Objectif</h3><p>${escape(t.objectif)}</p></div>`);
+  if (t.contexte) sections.push(`<div class="modal-section"><h3>📖 Contexte</h3><p>${escape(t.contexte)}</p></div>`);
+  if (t.comptes) {
+    sections.push(`<div class="modal-section"><h3>👤 Comptes à créer</h3><ul>${t.comptes.map(c => `<li><code>${escape(c.email)}</code> → <strong>${escape(c.role)}</strong> (${escape(c.rattachement)})</li>`).join('')}</ul></div>`);
+  }
+  if (t.pages) {
+    sections.push(`<div class="modal-section"><h3>📄 Pages concernées</h3><ul>${t.pages.map(p => `<li><strong>${escape(p.niveau)}</strong> : ${escape(p.pages)}<br><small>Requête : <code>${escape(p.requete)}</code></small></li>`).join('')}</ul></div>`);
+  }
+  if (t.sql) {
+    sections.push(`<div class="modal-section"><h3>💾 SQL à exécuter</h3><pre><code>${escape(t.sql)}</code></pre></div>`);
+  }
+  if (t.etapes && t.etapes.length) {
+    sections.push(`<div class="modal-section"><h3>📝 Étapes</h3><ol>${t.etapes.map(e => `<li>${escape(e)}</li>`).join('')}</ol></div>`);
+  }
+  if (t.criteres && t.criteres.length) {
+    sections.push(`<div class="modal-section"><h3>✅ Critères d’acceptation</h3><ul>${t.criteres.map(c => `<li>${escape(c)}</li>`).join('')}</ul></div>`);
+  }
+  if (t.notes) sections.push(`<div class="modal-section"><h3>💡 Notes</h3><p>${escape(t.notes)}</p></div>`);
+  if (t.historique && t.historique.length) {
+    sections.push(`<div class="modal-section"><h3>🕐 Historique</h3><ul>${t.historique.map(h => `<li>${escape(h)}</li>`).join('')}</ul></div>`);
+  }
+  body.innerHTML = sections.join('');
+  const meta = document.getElementById('modal-meta');
+  const deps = (t.depends_on || []).map(d => `<span class="badge">dépend de ${escape(d)}</span>`).join('');
+  const tags = (t.tags || []).map(tag => `<span class="tag">${escape(tag)}</span>`).join('');
+  meta.innerHTML = `
+    <span class="state-pill ${t.state}">${escape(t.state)}</span>
+    <span class="priority priority-${t.priority}">${escape(t.priority)}</span>
+    ${tags}
+    ${deps}
+    <span class="badge">créé ${escape(t.created)}</span>
+    ${t.updated ? `<span class="badge">modifié ${escape(t.updated)}</span>` : ''}
+  `;
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  currentTaskId = null;
+}
+
+function deleteCard() {
+  if (!currentTaskId) return;
+  if (!confirm('Supprimer définitivement cette tâche ?')) return;
+  tasks = tasks.filter(t => t.id !== currentTaskId);
+  save();
+  render();
+  closeModal();
+}
+
+function addCard(state) {
+  const titleInput = document.getElementById('new-title-' + state);
+  const prioInput = document.getElementById('new-prio-' + state);
+  const title = titleInput.value.trim();
+  if (!title) {
+    titleInput.focus();
+    return;
+  }
+  const prefix = state === 'backlog' ? 'BL' : state === 'pending' ? 'PEN' : state === 'active' ? 'ACT' : 'DONE';
+  const samePrefix = tasks.filter(t => t.id.startsWith(prefix));
+  const num = String(samePrefix.length + 1).padStart(3, '0');
+  const newTask = {
+    id: prefix + '-' + num,
+    state: state,
+    priority: prioInput.value,
+    title: title,
+    created: new Date().toISOString().slice(0, 10),
+    updated: new Date().toISOString().slice(0, 10),
+    tags: [],
+    depends_on: [],
+    objectif: '(à compléter)',
+    contexte: '',
+    etapes: [],
+    criteres: [],
+    notes: '',
+    historique: [new Date().toISOString().slice(0, 10) + ' : tâche créée.']
+  };
+  tasks.push(newTask);
+  save();
+  render();
+  titleInput.value = '';
+  titleInput.parentElement.removeAttribute('open');
+}
+
+function exportJSON() {
+  const data = JSON.stringify(tasks, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'legal-flow-tasks-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON() {
+  document.getElementById('importFile').click();
+}
+
+function handleImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!Array.isArray(data)) throw new Error('Le fichier doit contenir un tableau de tâches.');
+      if (!confirm('Remplacer toutes les tâches actuelles par celles du fichier ? (' + data.length + ' tâches)')) return;
+      tasks = data;
+      save();
+      render();
+    } catch (err) {
+      alert('Erreur d\'import : ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// Drag & drop
+document.querySelectorAll('.dropzone').forEach(zone => {
+  zone.addEventListener('dragover', e => {
+    e.preventDefault();
+    zone.classList.add('drag-over');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const id = e.dataTransfer.getData('text/plain');
+    const newState = zone.dataset.state;
+    const t = tasks.find(x => x.id === id);
+    if (t && t.state !== newState) {
+      t.state = newState;
+      t.updated = new Date().toISOString().slice(0, 10);
+      save();
+      render();
+    }
+  });
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+
+load();
+render();
+</script>
+</body>
+</html>
