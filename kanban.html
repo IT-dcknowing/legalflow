@@ -721,7 +721,7 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     historique: ['2026-09-05 : re-saisie depuis la note de mémoire.', '2026-09-05 : TERMINÉ. Recette OK.']
   },
   {
-    id: 'PEN-010', state: 'pending', priority: 'haute',
+    id: 'PEN-010', state: 'done', priority: 'haute',
     title: 'Supprimer le mode démo : RoleSwitcher + bouton démo + badge fixe Topbar',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['auth', 'supabase', 'topbar', 'login', 'cleanup'],
@@ -745,10 +745,10 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le bouton Déconnexion (LogOut) de la Topbar fonctionne et revient bien à la LoginPage.'
     ],
     notes: 'isProfileIncomplete était une prop du RoleSwitcher → à retirer aussi. Le state demoMode sert à bypass Supabase → à supprimer. isProfileIncomplete est calculé ailleurs (profile.profilComplet) → peut rester comme info mais ne pilote plus le RoleSwitcher.',
-    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES".']
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES".', '2026-09-05 : TERMINÉ. RoleSwitcher.tsx supprimé (grep vide), badge fixe nom+rôle dans Topbar, LoginPage sans démo. Seul signOut+signIn change de rôle.']
   },
   {
-    id: 'PEN-011', state: 'pending', priority: 'haute',
+    id: 'PEN-011', state: 'done', priority: 'haute',
     title: 'Filtrer la Sidebar par rôle avec les menus exacts (incl. entrées Journal)',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['sidebar', 'ui', 'roles', 'navigation'],
@@ -772,10 +772,10 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Les 3 nouvelles routes sont définies dans le type PageId sans erreur TypeScript.'
     ],
     notes: 'Garde-fou critique : le badge "NIV. 1" déjà affiché en haut de la Sidebar (lignes 272-282) pour super_admin est une bonne pratique à conserver. Idem le bouton "← Retour à Mes entreprises" pour le gestionnaire en mode entreprise.',
-    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-010 car la Sidebar n\'a de sens qu\'avec la session réelle (sinon RoleSwitcher réapparaît).']
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-010 car la Sidebar n\'a de sens qu\'avec la session réelle (sinon RoleSwitcher réapparaît).', '2026-09-05 : TERMINÉ. Entrées Journal/File ajoutées (HQ 8, portefeuille 4, entreprise 9), PageId étendus, filtrage par rôle conservé.']
   },
   {
-    id: 'PEN-012', state: 'pending', priority: 'haute',
+    id: 'PEN-012', state: 'done', priority: 'haute',
     title: 'Créer la page /journal (Date · Acteur · Action · Cible · Détail)',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['journal', 'audit', 'supabase', 'rls', 'page'],
@@ -800,8 +800,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le filtrage par entreprise (gestionnaire) restreint bien la liste à l\'entreprise choisie.',
       'L\'action "connexion" apparaît bien dans le journal de chaque utilisateur après login.'
     ],
-    notes: 'Mapping action → libellé à centraliser dans un objet ACTIONS_LABELS pour faciliter les évolutions. Si metadata contient un fichier, afficher un lien de téléchargement (signed URL du bucket preuves).',
-    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-011 car les 3 routes doivent d\'abord exister dans le type PageId et la Sidebar.']
+    notes: 'Mapping action → libellé centralisé dans ACTIONS_LABELS (JournalPage). Preuves : lien via metadata.fichier (signed URL à venir).',
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-011 car les 3 routes doivent d\'abord exister dans le type PageId et la Sidebar.', '2026-09-05 : TERMINÉ. JournalPage (Date·Acteur·Action·Cible·Détail, pagination 50, filtre entreprise) + 3 routes câblées. RLS fait le tri par niveau.']
   },
   {
     id: 'PEN-013', state: 'done', priority: 'haute',
@@ -832,7 +832,7 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §6 (sécurité RLS) et §7 (events journal). Tâche fondatrice, doit être faite AVANT PEN-015/016/018.', '2026-09-05 : TERMINÉ. Batterie API : insert super_admin 403, auto-promotion 400, admin OK, pas de récursion.']
   },
   {
-    id: 'PEN-014', state: 'pending', priority: 'haute',
+    id: 'PEN-014', state: 'done', priority: 'haute',
     title: 'Landing page / (Hero + 3 personas + Features + Pricing + Footer) inspirée des 3 visuels',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['landing', 'ui', 'public', 'marketing', 'inspiration'],
@@ -860,11 +860,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le rendu est responsive (mobile OK).',
       'Aucun import inutile : la page charge vite, pas d\'images lourdes externes.'
     ],
-    notes: 'Inspiration principale : image 2 (light theme, sobre, palette violet/indigo). Éviter l\'aspect "dark SaaS tech" de l\'image 1 — pas adapté au public ivoirien PME. Conserver la structure 3 personas / 6 features de l\'image 3 pour la densité d\'information. Pas de Tailwind pur CSS-modules : rester sur Tailwind v4 (cohérence stack).',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §2 (routing public/privé) et l\'analyse des 3 visuels dans legal-flow/landing_page/.']
+    notes: 'LandingPage en Tailwind uniquement, sans images lourdes. Page par défaut hors session.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §2 (routing public/privé) et l\'analyse des 3 visuels dans legal-flow/landing_page/.', '2026-09-05 : TERMINÉ. Hero, 3 personas, 6 features, pricing Gratuit/Pro 9 900/Cabinet, footer, responsive, aucun lien admin.']
   },
   {
-    id: 'PEN-015', state: 'pending', priority: 'haute',
+    id: 'PEN-015', state: 'done', priority: 'haute',
     title: 'Login — 3 états de session (actif/en_attente/suspendu) + Mot de passe oublié + erreur neutre',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['login', 'auth', 'routing', 'session', 'supabase'],
@@ -888,11 +888,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le message d\'erreur est NEUTRE (pas d\'énumération possible).',
       'Chaque connexion réussie log un event dans le journal.'
     ],
-    notes: 'Logique de routage à centraliser dans une fonction routeAfterLogin(role, statut) pour la lisibilité. Le helper logConnexion vient de PEN-013.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3 (comportement de connexion) et §7 (events journal). Dépend de PEN-013 pour logConnexion et pour que la policy profiles_select permette de lire role+statut de self.']
+    notes: 'Routage centralisé dans routeAfterLogin(role, statut). Reset via resetPasswordForEmail, message neutre partout.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3 (comportement de connexion) et §7 (events journal). Dépend de PEN-013 pour logConnexion et pour que la policy profiles_select permette de lire role+statut de self.', '2026-09-05 : TERMINÉ.']
   },
   {
-    id: 'PEN-016', state: 'pending', priority: 'haute',
+    id: 'PEN-016', state: 'done', priority: 'haute',
     title: 'Page /inscription (toggle entreprise/cabinet + 2 formulaires) + auto-création Supabase',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['inscription', 'auth', 'supabase', 'rls', 'forms'],
@@ -919,11 +919,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Un email déjà utilisé affiche un message clair côté UI.',
       'Password min 6 + confirmation validés côté client.'
     ],
-    notes: 'La policy profiles_insert de PEN-013 est CRITIQUE ici : elle doit laisser passer (role=entreprise+actif) et (role=gestionnaire+en_attente) mais RIEN d\'autre. Si le dev essaie d\'insérer role=super_admin par accident, ça doit être bloqué. Spec §4.3.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §4 (inscription) et §7 (events journal). Dépend de PEN-013 (policies RLS + helpers logInscription).']
+    notes: 'Chaîne complète vérifiée en API (insert→link→visibilité), comptes de test nettoyés. Réserve : rate limit email 429 — confirmations de test via SQL. Finalisation différée (localStorage, sans mot de passe) si pas de session immédiate.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §4 (inscription) et §7 (events journal). Dépend de PEN-013 (policies RLS + helpers logInscription).', '2026-09-05 : TERMINÉ (policies 0004 + InscriptionPage + inscriptionService).']
   },
   {
-    id: 'PEN-017', state: 'pending', priority: 'haute',
+    id: 'PEN-017', state: 'done', priority: 'haute',
     title: 'Pages blocantes /en-attente et /suspendu (full-screen, sans nav)',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['routing', 'ui', 'session', 'blocker'],
@@ -946,11 +946,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Aucun lien de navigation interne n\'est cliquable depuis ces 2 pages.',
       'Les messages sont clairs et donnent une attente (24-48h) ou un contact (support).'
     ],
-    notes: 'Ces pages sont des "prison" UX : un user bloqué ne doit avoir AUCUN chemin vers l\'app. Toute issue doit passer par support. C\'est une mesure anti-contournement. Le bouton Déconnexion est la SEULE action permise.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.2 et §3.3. Dépend de PEN-015 (qui redirige vers ces routes après signIn).']
+    notes: 'Prison UX : aucun chemin vers l’app depuis ces pages, seul Déconnexion. Garde anti-accès pour les actifs en place.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.2 et §3.3. Dépend de PEN-015 (qui redirige vers ces routes après signIn).', '2026-09-05 : TERMINÉ (EnAttentePage + SuspenduPage full-screen).']
   },
   {
-    id: 'PEN-018', state: 'pending', priority: 'haute',
+    id: 'PEN-018', state: 'done', priority: 'haute',
     title: 'HQ — File "Cabinets en attente" + boutons Activer/Refuser + emails + journal',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['hq', 'admin', 'validation', 'rls', 'journal'],
@@ -975,11 +975,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'La liste se rafraîchit après action sans recharger la page.',
       'Les events cabinet_active et cabinet_refuse sont présents dans le journal.'
     ],
-    notes: 'Pour l\'envoi d\'emails, le plus rapide est d\'utiliser les Supabase Auth templates (sendMail via une edge function ou un trigger SQL). Si trop complexe en V1, stubber avec un console.log + un event journal "email_sent" (action future = vraie intégration SMTP/Resend). Spec §5 ne précise pas le canal, c\'est une décision dev.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §5 (panneau admin HQ) et §7 (events journal). Dépend de PEN-016 (pour avoir des cabinets à activer) et PEN-017 (cohérence UX avec les pages blocantes).']
+    notes: 'Emails en stub (event email_sent) en attendant SMTP/Resend. RLS cabinets ajoutée au passage (table sans RLS détectée). Page réservée super_admin.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §5 (panneau admin HQ) et §7 (events journal). Dépend de PEN-016 (pour avoir des cabinets à activer) et PEN-017 (cohérence UX avec les pages blocantes).', '2026-09-05 : TERMINÉ (CabinetsEnAttentePage + entrée Sidebar).']
   },
   {
-    id: 'PEN-019', state: 'pending', priority: 'haute',
+    id: 'PEN-019', state: 'done', priority: 'haute',
     title: 'Garde-fous de routing : redirect /login si pas de session, redirect espace propre si mauvais rôle, sur chaque page protégée',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['routing', 'auth', 'securite', 'rls'],
@@ -1002,11 +1002,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'La matrice rôle × route est documentée dans le code (commentaire en tête de routeGuard.ts).',
       'Les URLs directes (refresh, partage de lien) sont gérées (le guard s\'exécute aussi au mount).'
     ],
-    notes: 'Ce guard est la dernière ligne de défense. La sécurité réelle est dans les RLS (PEN-013), mais ce guard évite les écrans vides et les bugs UX. Ne PAS dupliquer la logique RLS côté frontend — l\'objectif est uniquement l\'UX et le routage.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.4 (garantie routing par rôle). Dépend de PEN-010 (cleanup mode démo) pour que useRealAuth soit la seule source de vérité.']
+    notes: 'RLS reste la vraie sécurité ; le guard ne fait que router. Matrice 19/19 vérifiée par script.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.4 (garantie routing par rôle). Dépend de PEN-010 (cleanup mode démo) pour que useRealAuth soit la seule source de vérité.', '2026-09-05 : TERMINÉ (routeGuard.ts + enforcement App + log acces_refuse).']
   },
   {
-    id: 'PEN-020', state: 'pending', priority: 'moyenne',
+    id: 'PEN-020', state: 'done', priority: 'moyenne',
     title: 'Recette des 10 critères d\'acceptation de la spec (dont test SQL refus INSERT super_admin)',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['recette', 'qa', 'sql', 'acceptance'],
@@ -1035,8 +1035,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Tous les critères sont ✅ (ou listés en 🔴 si échec, avec plan d\'action).',
       'Un commit final marque la fin du chantier.'
     ],
-    notes: 'Cette tâche est DOCUMENTAIRE. Pas de code à écrire (sauf d\'éventuels correctifs si un critère échoue → créer une sous-tâche PEN-021+). Le commit final peut être "chore: spec authentification livrée, ACCEPTANCE.md complet".',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" — 10 critères d\'acceptation. Tâche de clôture du chantier.']
+    notes: 'Recette documentaire : ACCEPTANCE.md à la racine (10 critères, statuts + procédures + observés). Correctifs éventuels → PEN-021+.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" — 10 critères d\'acceptation. Tâche de clôture du chantier.', '2026-09-05 : TERMINÉ. 7 critères ✅ prouvés, 3 partiels (⚠️ visuel navigateur / emails stub / rate limit). Voir ACCEPTANCE.md.']
   }
 ];
 

@@ -64,9 +64,12 @@ import { ArrowLeft } from 'lucide-react';
 import { AccueilPage } from './pages/AccueilPage';
 import { LandingPage } from './pages/LandingPage';
 import { InscriptionPage } from './pages/InscriptionPage';
+import { canAccess } from './services/routeGuard';
 import { completePendingInscription } from './services/inscriptionService';
 import { EnAttentePage } from './pages/EnAttentePage';
 import { SuspenduPage } from './pages/SuspenduPage';
+import { JournalPage } from './pages/JournalPage';
+import { CabinetsEnAttentePage } from './pages/CabinetsEnAttentePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { EcheancierPage } from './pages/EcheancierPage';
 import { OpportunitesPage } from './pages/OpportunitesPage';
@@ -708,14 +711,34 @@ export function App() {
   };
 
   // Garde : un compte ACTIF ne doit jamais voir les pages blocantes (PEN-017 §6).
+  // PEN-019 : matrice complète rôle × route + traçage acces_refuse.
   React.useEffect(() => {
-    if (!useRealAuth || !authUserId || !dbProfile) return;
+    if (!useRealAuth || !authReady) return;
+    const ctx = {
+      session: !!authUserId,
+      role: dbProfile?.role || (currentRole as string),
+      statut: dbProfile?.statut || 'actif',
+      page: activePage,
+    };
+    if (!authUserId) {
+      if (!canAccess({ ...ctx, session: false })) setActivePage('landing');
+      return;
+    }
+    if (!dbProfile) return;
     if ((dbProfile.statut || 'actif') === 'actif' &&
         (activePage === 'en_attente' || activePage === 'suspendu')) {
       setActivePage(getDefaultPageForRole(dbProfile.role));
+      return;
+    }
+    if (!canAccess(ctx)) {
+      logEvent('acces_refuse', undefined, undefined, {
+        requested_page: activePage,
+        user_role: dbProfile.role,
+      });
+      setActivePage(routeAfterLogin(dbProfile.role, dbProfile.statut || 'actif'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage, authUserId, dbProfile]);
+  }, [activePage, authUserId, dbProfile, authReady]);
 
   // Portail public : sans session → landing (défaut), login ou inscription.
   if (useRealAuth && !authUserId) {
@@ -732,7 +755,10 @@ export function App() {
     if (activePage === 'inscription') {
       return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} />;
     }
-    return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} signupHint />;
+    if (activePage === 'login') {
+      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} signupHint />;
+    }
+    return <LandingPage onNavigate={handleNavigate} />;
   }
   // Pages blocantes : compte non actif, sans Topbar ni Sidebar (PEN-017).
   if (useRealAuth && authUserId && activePage === 'en_attente') {
@@ -869,6 +895,22 @@ export function App() {
                 onOpenCompleteModal={handleManagerCompleteProfile}
                 onOpenCertifyReport={handleOpenCertifyForCompany}
               />
+            )}
+
+            {currentRole === 'gestionnaire' &&
+              !isGestionnaireInCompanyMode &&
+              activePage === 'gestionnaire_journal' && (
+                <JournalPage role="gestionnaire" entreprises={companies} />
+              )}
+
+            {activePage === 'entreprise_historique' && <JournalPage role="utilisateur" />}
+
+            {currentRole === 'super_admin' && activePage === 'super_admin_journal' && (
+              <JournalPage role="super_admin" />
+            )}
+
+            {currentRole === 'super_admin' && activePage === 'super_admin_cabinets_attente' && (
+              <CabinetsEnAttentePage />
             )}
 
             {/* SUPER ADMIN PAGES */}

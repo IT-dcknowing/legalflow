@@ -19,6 +19,7 @@ import {
   ArrowLeft,
   Briefcase,
   Settings,
+  History,
 } from 'lucide-react';
 import { PageId, UserRole, CompanyEntity } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
@@ -122,6 +123,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Rappels J+3, J+7, J+15',
       icon: <Mail className="w-[18px] h-[18px]" />,
     },
+    {
+      id: 'super_admin_journal',
+      label: 'Journal',
+      icon: <History className="w-[18px] h-[18px]" />,
+    },
+    {
+      id: 'super_admin_cabinets_attente',
+      label: 'File d’attente cabinets',
+      icon: <UserCheck className="w-[18px] h-[18px]" />,
+    },
   ];
 
   // 2. Navigation items for GESTIONNAIRE (Niveau 2) — Portefeuille (Ultra Simple)
@@ -145,6 +156,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {companies.length}
         </span>
       ),
+    },
+    {
+      id: 'gestionnaire_journal',
+      label: 'Journal mes clients',
+      icon: <History className="w-[18px] h-[18px]" />,
     },
     {
       id: 'profil',
@@ -213,6 +229,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'profil',
       label: role === 'gestionnaire' ? "Fiche de l'entreprise" : 'Profil',
       icon: <UserCheck className="w-[18px] h-[18px]" />,
+    },
+    {
+      id: 'entreprise_historique',
+      label: 'Mon historique',
+      icon: <History className="w-[18px] h-[18px]" />,
     },
   ];
 
