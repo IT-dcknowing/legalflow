@@ -188,14 +188,13 @@ export function App() {
   const [isLaravelViewerOpen, setIsLaravelViewerOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(3);
 
-  // ---- Auth réelle Supabase (null = mode démo sans backend) ----
+  // ---- Auth réelle Supabase (PEN-010 : plus de mode démo) ----
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [dbProfile, setDbProfile] = useState<DbProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [profileChecked, setProfileChecked] = useState(false);
-  const [demoMode, setDemoMode] = useState(false);
   const sessionLoadedFor = React.useRef<string | null>(null);
-  const useRealAuth = isSupabaseConfigured() && !demoMode;
+  const useRealAuth = isSupabaseConfigured();
 
   const uuidOrUndef = (v?: string | null): string | undefined =>
     v && /^[0-9a-f-]{36}$/i.test(v) ? v : undefined;
@@ -325,7 +324,7 @@ export function App() {
   };
 
   React.useEffect(() => {
-    if (!isSupabaseConfigured() || demoMode) {
+    if (!isSupabaseConfigured()) {
       setAuthReady(true);
       return;
     }
@@ -356,7 +355,7 @@ export function App() {
       sub.subscription.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoMode]);
+  }, []);
 
   const handleLogin = async (email: string, password: string): Promise<string | null> => {
     if (!supabase) return 'Backend non configuré.';
@@ -464,33 +463,6 @@ export function App() {
     admin_notifications: 'Notifications Globales',
     admin_audits: 'Audits Transversaux',
     admin_schema: 'Schéma Supabase',
-  };
-
-  // Switch de rôle depuis le RoleSwitcher
-  const handleSelectRoleProfile = (role: UserRole, userKey: string) => {
-    setCurrentRole(role);
-    const selectedUser = mockUsers[userKey] || mockUsers.utilisateur_complet;
-    setCurrentUser(selectedUser);
-    setIsGestionnaireInCompanyMode(false);
-    setCompanyPendingEnter(null);
-
-    if (role === 'super_admin') {
-      setActivePage('super_admin');
-    } else if (role === 'gestionnaire') {
-      setActivePage('gestionnaire_dashboard');
-    } else if (userKey === 'utilisateur_incomplet') {
-      // Utilisateur Niveau 3 avec profil incomplet (Atelier N'Guessan)
-      const incomplet = companies.find((c) => c.id === 'ent-nguessan') || companies[0];
-      setActiveCompanyId(incomplet.id);
-      setProfile(entityToProfile(incomplet));
-      setActivePage('dashboard');
-    } else {
-      // Utilisateur Niveau 3 avec profil complet (Koffi BTP)
-      const complet = companies.find((c) => c.id === 'ent-koffi') || companies[0];
-      setActiveCompanyId(complet.id);
-      setProfile(entityToProfile(complet));
-      setActivePage('dashboard');
-    }
   };
 
   // Demande d'accès à l'espace d'une entreprise (Gestionnaire -> Confirmation Modal)
@@ -671,7 +643,7 @@ export function App() {
     }
   };
 
-  // Portail : sans session réelle → LoginPage (sauf chargement ou mode démo).
+  // Portail : sans session réelle → LoginPage (auth Supabase uniquement, PEN-010).
   if (useRealAuth && !authUserId) {
     if (!authReady) {
       return (
@@ -680,13 +652,7 @@ export function App() {
         </div>
       );
     }
-    return (
-      <LoginPage
-        onLogin={handleLogin}
-        demoAvailable
-        onDemo={() => setDemoMode(true)}
-      />
-    );
+    return <LoginPage onLogin={handleLogin} />;
   }
   if (useRealAuth && authUserId && profileChecked && !dbProfile) {
     return (
@@ -759,8 +725,6 @@ export function App() {
             unreadCount={unreadNotifCount}
             currentRole={currentRole}
             currentUser={currentUser}
-            isProfileIncomplete={!profile.profilComplet}
-            onSelectRoleProfile={handleSelectRoleProfile}
           />
 
           {/* Bandeau d'espace client pour le Gestionnaire quand il est dans un dossier */}

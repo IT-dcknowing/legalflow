@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
-import { Lock, Mail, LogIn, FlaskConical } from 'lucide-react';
+import { Lock, Mail, LogIn } from 'lucide-react';
 import { LegalFlowLogo } from './LegalFlowLogo';
 
 interface LoginPageProps {
   onLogin: (email: string, password: string) => Promise<string | null>;
-  demoAvailable: boolean;
-  onDemo: () => void;
 }
 
 /**
@@ -13,7 +11,7 @@ interface LoginPageProps {
  * Pas d'inscription publique : les comptes sont créés par invitation
  * (Niv. 1 → Niv. 2 → Niv. 3). Le rôle est lu en base après login.
  */
-export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, demoAvailable, onDemo }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -105,16 +103,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, demoAvailable, on
             Pas de compte ? Les accès sont créés par invitation par votre cabinet ou Legal Flow HQ.
           </p>
         </div>
-
-        {demoAvailable && (
-          <button
-            onClick={onDemo}
-            className="w-full flex items-center justify-center gap-2 text-xs font-bold text-[#4F46A0] hover:underline cursor-pointer"
-          >
-            <FlaskConical className="w-3.5 h-3.5" />
-            <span>Continuer en mode démo (données locales)</span>
-          </button>
-        )}
       </div>
     </div>
   );

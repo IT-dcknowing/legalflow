@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bell, MessageSquare, Menu, LogOut } from 'lucide-react';
 import { PageId, UserRole, AppUser } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
-import { RoleSwitcher } from './RoleSwitcher';
 import {
   formatDateReferenceShort,
   getDateReferenceOverrideIso,
@@ -21,8 +20,6 @@ interface TopbarProps {
   unreadCount?: number;
   currentRole?: UserRole;
   currentUser?: AppUser;
-  isProfileIncomplete?: boolean;
-  onSelectRoleProfile?: (role: UserRole, userKey: string) => void;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -36,8 +33,6 @@ export const Topbar: React.FC<TopbarProps> = ({
   unreadCount = 3,
   currentRole = 'utilisateur',
   currentUser,
-  isProfileIncomplete = false,
-  onSelectRoleProfile,
 }) => {
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -87,14 +82,29 @@ export const Topbar: React.FC<TopbarProps> = ({
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3 relative" ref={notifRef}>
-        {/* Role Switcher Simulator (Super Admin, Gestionnaire, Utilisateur) */}
-        {onSelectRoleProfile && currentUser && (
-          <RoleSwitcher
-            currentRole={currentRole}
-            currentUser={currentUser}
-            isProfileIncomplete={isProfileIncomplete}
-            onSelectRoleProfile={onSelectRoleProfile}
-          />
+        {/* Badge fixe session réelle : nom + rôle coloré par niveau (PEN-010) */}
+        {currentUser && (
+          <div
+            id="userBadge"
+            title={currentUser.email}
+            className={`hidden md:flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border whitespace-nowrap ${
+              currentRole === 'super_admin'
+                ? 'bg-[#F3EFFF] text-[#7C3AED] border-[#DDD0FA]'
+                : currentRole === 'gestionnaire'
+                ? 'bg-[#EDEBF9] text-[#3D3680] border-[#C7C4E8]'
+                : 'bg-[#E0F2FE] text-[#0369A1] border-[#BAE6FD]'
+            }`}
+          >
+            <span className="max-w-[140px] truncate">{currentUser.fullName}</span>
+            <span aria-hidden>·</span>
+            <span>
+              {currentRole === 'super_admin'
+                ? 'Super Admin HQ'
+                : currentRole === 'gestionnaire'
+                ? 'Gestionnaire'
+                : 'Utilisateur'}
+            </span>
+          </div>
         )}
 
         {/* Notification Bell button */}
