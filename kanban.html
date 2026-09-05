@@ -719,6 +719,324 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Vérifié le 2026-09-05 via API REST : 6/6 critères OK (3 logins + refus mauvais mdp, RLS alex=Koffi uniquement, chat retrouvé, journal par niveau, upload+preuve, session). Écart : pas de script Playwright, tests manuels documentés.',
     historique: ['2026-09-05 : re-saisie depuis la note de mémoire.', '2026-09-05 : TERMINÉ. Recette OK.']
+  },
+  {
+    id: 'PEN-010', state: 'pending', priority: 'haute',
+    title: 'Supprimer le mode démo : RoleSwitcher + bouton démo + badge fixe Topbar',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['auth', 'supabase', 'topbar', 'login', 'cleanup'],
+    depends_on: ['PEN-001', 'PEN-003', 'PEN-004'],
+    objectif: 'Sortir l\'appli du mode démo : plus de RoleSwitcher mock, plus de bouton "Continuer en mode démo", uniquement de l\'auth réelle Supabase. La Topbar affiche un badge fixe (nom + rôle) issu de la session.',
+    contexte: 'L\'auth réelle est déjà en place (signInWithPassword, enterRealSession, getSession) — voir App.tsx lignes 190-381 et PEN-003/004. MAIS le RoleSwitcher mock coexiste encore : App.tsx importe RoleSwitcher, le passe à Topbar, et handleSelectRoleProfile écrase l\'état réel. LoginPage affiche un bouton "Continuer en mode démo" qui bypass Supabase. Il faut nettoyer tout ça.',
+    etapes: [
+      '1. Supprimer src/components/RoleSwitcher.tsx (fichier complet, plus aucun import nulle part).',
+      '2. Topbar.tsx : retirer l\'import { RoleSwitcher }, le bloc {onSelectRoleProfile && currentUser && (<RoleSwitcher .../>)} lignes 91-98, et la prop onSelectRoleProfile de l\'interface TopbarProps.',
+      '3. LoginPage.tsx : retirer les props demoAvailable et onDemo, supprimer le bouton "Continuer en mode démo (données locales)" lignes 109-117.',
+      '4. App.tsx : (a) retirer l\'import { RoleSwitcher } (s\'il existe), (b) retirer le state demoMode + useRealAuth, (c) simplifier : SI useRealAuth ET !authUserId → LoginPage sans bouton démo ; SINON (authUserId OK) → app. (d) supprimer handleSelectRoleProfile (lignes 468-492), supprimer la prop onSelectRoleProfile passée à Topbar (ligne 761).',
+      '5. Topbar : remplacer le bloc RoleSwitcher par un badge fixe "nom utilisateur + rôle" coloré par niveau (super_admin: violet comme dans la Sidebar, gestionnaire: bleu foncé, utilisateur: bleu clair). Source : currentUser.fullName + currentRole.',
+      '6. Vérifier que handleLogout fonctionne toujours (déjà OK dans PEN-003).',
+      '7. Vérifier le build : pas de ReferenceError RoleSwitcher/isProfileIncomplete.'
+    ],
+    criteres: [
+      'Aucun fichier ne référence RoleSwitcher (grep -r "RoleSwitcher" src/ → vide).',
+      'LoginPage ne propose plus de bouton démo.',
+      'À la connexion, la Topbar affiche un badge "Prénom NOM · Super Admin HQ" (ou Gestionnaire / Utilisateur selon le rôle).',
+      'Le changement de rôle n\'est possible QUE via signOut + signIn d\'un autre compte.',
+      'Le bouton Déconnexion (LogOut) de la Topbar fonctionne et revient bien à la LoginPage.'
+    ],
+    notes: 'isProfileIncomplete était une prop du RoleSwitcher → à retirer aussi. Le state demoMode sert à bypass Supabase → à supprimer. isProfileIncomplete est calculé ailleurs (profile.profilComplet) → peut rester comme info mais ne pilote plus le RoleSwitcher.',
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES".']
+  },
+  {
+    id: 'PEN-011', state: 'pending', priority: 'haute',
+    title: 'Filtrer la Sidebar par rôle avec les menus exacts (incl. entrées Journal)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['sidebar', 'ui', 'roles', 'navigation'],
+    depends_on: ['PEN-010'],
+    objectif: 'Faire en sorte que chaque rôle voie UNIQUEMENT les entrées de menu de son périmètre (spec du brief) : super_admin avec Journal global, gestionnaire avec Dashboard + Mes entreprises + Profil + Journal mes clients, entreprise (vue utilisateur) avec Dashboard + Échéancier + Opportunités + Bibliothèque + Veille + Documents + Profil + Mon historique.',
+    contexte: 'La Sidebar (Sidebar.tsx, 423 lignes) a DÉJÀ 3 tableaux : superAdminNavItems, gestionnairePortfolioNavItems, companyNavItems. Le filtrage par rôle existe déjà (lignes 220-225). MAIS : (a) les entrées Journal ne sont pas présentes, (b) les libellés doivent matcher EXACTEMENT le spec, (c) certaines entrées inutiles pour l\'utilisateur final (Schéma Supabase, Audits Transversaux admin) doivent être verrouillées au bon rôle.',
+    etapes: [
+      '1. Mettre à jour superAdminNavItems (lignes 79-125) : ajouter une 7e entrée "Journal" (icône ShieldAlert ou History) qui pointe vers la nouvelle route \'super_admin_journal\' (créée en PEN-012).',
+      '2. Mettre à jour gestionnairePortfolioNavItems (lignes 128-154) : ordre = Dashboard, Mes entreprises, Journal mes clients, Mon profil / Paramètres. Journal pointe vers \'gestionnaire_journal\'.',
+      '3. Mettre à jour companyNavItems (lignes 157-217) : ajouter une 9e entrée "Mon historique" (icône History) qui pointe vers \'entreprise_historique\' (= PEN-012 vue scopée à l\'entreprise de l\'utilisateur).',
+      '4. Étendre le type PageId dans src/types/index.ts : ajouter \'super_admin_journal\', \'gestionnaire_journal\', \'entreprise_historique\'.',
+      '5. Étendre pageTitles dans App.tsx (ligne 442) : ajouter les 3 nouveaux libellés.',
+      '6. Vérifier que le filtrage "actif" (lignes 220-225) couvre bien les 3 cas : super_admin → superAdminNavItems ; gestionnaire en mode portefeuille → gestionnairePortfolioNavItems ; utilisateur OU gestionnaire en mode entreprise → companyNavItems.',
+      '7. Si un utilisateur clique sur une entrée hors périmètre (ex: super_admin_journal cliqué par un utilisateur), fallback vers la home de son rôle.'
+    ],
+    criteres: [
+      'En super_admin : 7 entrées visibles dont "Journal" en dernier.',
+      'En gestionnaire (mode portefeuille) : 4 entrées : Dashboard, Mes entreprises, Journal mes clients, Mon profil / Paramètres.',
+      'En entreprise (utilisateur ou gestionnaire en mode client) : 9 entrées dont "Mon historique" en dernier.',
+      'Aucun rôle ne voit les entrées d\'un autre rôle (test rapide : se connecter avec chaque compte et lister le menu).',
+      'Les 3 nouvelles routes sont définies dans le type PageId sans erreur TypeScript.'
+    ],
+    notes: 'Garde-fou critique : le badge "NIV. 1" déjà affiché en haut de la Sidebar (lignes 272-282) pour super_admin est une bonne pratique à conserver. Idem le bouton "← Retour à Mes entreprises" pour le gestionnaire en mode entreprise.',
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-010 car la Sidebar n\'a de sens qu\'avec la session réelle (sinon RoleSwitcher réapparaît).']
+  },
+  {
+    id: 'PEN-012', state: 'pending', priority: 'haute',
+    title: 'Créer la page /journal (Date · Acteur · Action · Cible · Détail)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['journal', 'audit', 'supabase', 'rls', 'page'],
+    depends_on: ['PEN-011'],
+    objectif: 'Créer une page /journal qui lit la table journal_evenements et affiche un tableau avec colonnes Date · Acteur · Action · Cible · Détail. La RLS existante (PEN-007) filtre automatiquement par niveau : super_admin voit tout, gestionnaire voit les actions de ses clients, utilisateur voit les siennes.',
+    contexte: 'La table journal_evenements existe déjà avec RLS (PEN-001 schéma, PEN-007 policy journal_select). Plusieurs points d\'action écrivent déjà dans le journal : signIn (PEN-003), upload preuve (PEN-008), génération rapport, complétion profil. Il manque juste la page de consultation. 3 routes à créer : super_admin_journal (tous événements), gestionnaire_journal (événements des entreprises de son cabinet), entreprise_historique (ses propres événements uniquement).',
+    etapes: [
+      '1. Vérifier que src/services/supabaseClient.ts exporte bien une fonction fetchJournal({limit, offset, filter}) qui fait un SELECT sur journal_evenements avec jointure profiles (pour le nom de l\'acteur). Sinon, l\'ajouter.',
+      '2. Créer src/pages/JournalPage.tsx : composant React qui prend role (\'super_admin\' | \'gestionnaire\' | \'utilisateur\') en prop, appelle fetchJournal() au mount, affiche : en-tête "Journal d\'audit" + sous-titre dynamique selon le rôle + tableau avec colonnes [Date | Acteur | Action | Cible | Détail] + pagination simple (50 par page, bouton "Charger plus").',
+      '3. Format de chaque ligne : Date = created_at au format JJ/MM/AAAA HH:MM, Acteur = profiles.nom_complet OU email si null, Action = libellé lisible de l\'action (mapping fixe : "connexion" → "Connexion", "quittance_pointee" → "Quittance pointée", "rapport_genere" → "Rapport généré", "profil_complete" → "Profil complété"), Cible = entite_type + ID court, Détail = metadata sérialisée en JSON pretty.',
+      '4. Style : utiliser les mêmes couleurs que la Sidebar/Dashboard (--accent #4F46A0, --text #171A2E, --border #E5E5F0). Skeleton loader pendant le chargement.',
+      '5. Câbler la page dans App.tsx : 3 conditions dans le main (lignes 800-925) qui rendent <JournalPage role={currentRole} /> selon activePage === \'super_admin_journal\' / \'gestionnaire_journal\' / \'entreprise_historique\'.',
+      '6. État vide : si 0 ligne, afficher un message "Aucune action enregistrée pour le moment." (utile pour les comptes freshly-créés).',
+      '7. Filtre par entreprise (gestionnaire) : dropdown qui permet de filtrer les événements par entite_id (uniquement les entreprises du cabinet).',
+      '8. Test manuel : se connecter en aminata@legalflow.ci → /journal doit montrer les événements de tous ; en cabinet@auditconseils.ci → seulement ceux de ses 5 clients ; en alex@koffibtp.ci → seulement ceux de Koffi BTP.'
+    ],
+    criteres: [
+      'La page /journal s\'affiche sans erreur pour les 3 rôles.',
+      'La RLS borne correctement : 0 ligne pour un utilisateur qui n\'a pas d\'événement, plusieurs lignes pour un compte actif.',
+      'Les colonnes sont dans l\'ordre : Date, Acteur, Action, Cible, Détail.',
+      'La pagination fonctionne (Charger plus ajoute 50 lignes).',
+      'Le filtrage par entreprise (gestionnaire) restreint bien la liste à l\'entreprise choisie.',
+      'L\'action "connexion" apparaît bien dans le journal de chaque utilisateur après login.'
+    ],
+    notes: 'Mapping action → libellé à centraliser dans un objet ACTIONS_LABELS pour faciliter les évolutions. Si metadata contient un fichier, afficher un lien de téléchargement (signed URL du bucket preuves).',
+    historique: ['2026-09-05 : créé depuis le brief "BRANCHER L\'APPLI SUR LES VRAIS COMPTES". Dépend de PEN-011 car les 3 routes doivent d\'abord exister dans le type PageId et la Sidebar.']
+  },
+  {
+    id: 'PEN-013', state: 'pending', priority: 'haute',
+    title: 'SQL — Policies RLS profiles_insert + profiles_update + events journal manquants',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['supabase', 'sql', 'rls', 'journal', 'securite'],
+    depends_on: [],
+    objectif: 'Poser les fondations sécurité avant tout nouveau flux : (1) policy profiles_insert qui empêche un utilisateur de s\'attribuer super_admin ou un statut non-conforme, (2) policy profiles_update qui empêche l\'auto-promotion role/statut, (3) ajout des 6 events journal manquants (connexion, deconnexion, inscription_entreprise, inscription_cabinet, cabinet_active, cabinet_refuse).',
+    contexte: 'Les tables profiles, cabinets, entreprises existent déjà (PEN-001/002). Les policies RLS actuelles (PEN-007) couvrent la lecture. MAIS rien n\'empêche aujourd\'hui un user connecté de faire INSERT INTO profiles (id=auth.uid(), role=super_admin) ou de UPDATE son propre role vers super_admin. La spec §6 exige ce verrou. Côté journal, seuls quelques events sont tracés (PEN-003/008) — la spec §7 en demande 6 nouveaux.',
+    etapes: [
+      '1. Dans supabaseSchema.sql (ou un nouveau fichier supabase_rls_policies_v2.sql) : ajouter policy profiles_insert : WITH CHECK (id = auth.uid() AND role != \'super_admin\' AND ((role = \'entreprise\' AND statut = \'actif\') OR (role = \'gestionnaire\' AND statut = \'en_attente\'))).',
+      '2. Ajouter policy profiles_update : USING (id = auth.uid()) WITH CHECK (id = auth.uid() AND role = (SELECT role FROM profiles WHERE id = auth.uid()) AND statut = (SELECT statut FROM profiles WHERE id = auth.uid())). Effet : l\'user peut modifier son profil mais PAS son role ni son statut. Seul super_admin (via une policy séparée admin) peut muter role/statut.',
+      '3. Ajouter policy profiles_update_admin : USING (get_my_role() = \'super_admin\') WITH CHECK (true). Permet au super_admin de tout modifier.',
+      '4. Vérifier que la fonction get_my_role() existe (créée en PEN-007) et qu\'elle ne crée pas de récursion avec la nouvelle policy.',
+      '5. Côté journal : créer src/services/journalEvents.ts (ou étendre App.tsx) avec une fonction logEvent(action, entiteType, entiteId, metadata) qui INSERT dans journal_evenements. Ajouter 6 helpers : logConnexion(userId), logDeconnexion(userId), logInscriptionEntreprise(userId, entrepriseId), logInscriptionCabinet(userId, cabinetId), logCabinetActive(adminId, cabinetId), logCabinetRefuse(adminId, cabinetId, motif).',
+      '6. Câbler logConnexion dans le flow signIn existant (PEN-003) après setSession. Câbler logDeconnexion dans handleLogout.',
+      '7. Test SQL critique : (a) connecté en aminata@legalflow.ci, tenter INSERT INTO profiles (id=auth.uid(), role=\'super_admin\') → doit échouer (policy_insert le refuse). (b) tenter UPDATE profiles SET statut=\'actif\' WHERE id=autre_user_id → doit échouer (policy_update interdit).',
+      '8. Commit supabaseSchema.sql + journalEvents.ts + App.tsx mis à jour.'
+    ],
+    criteres: [
+      'Aucune policy ne permet à un non-super_admin de s\'attribuer super_admin (vérif SQL).',
+      'Un user ne peut pas muter son propre role ni son statut via UPDATE direct (vérif SQL).',
+      'Le super_admin peut toujours tout lire/modifier (ses policies sont intactes).',
+      '6 nouveaux events journal sont définis et câblés dans le code.',
+      'Connexion et déconnexion tracent bien un event dans la table.'
+    ],
+    notes: 'ATTENTION à la récursion RLS : profiles_select appelle get_my_role() qui lit profiles. profiles_update ne doit PAS appeler get_my_role() (laisse l\'UPDATE self passer si role+statut inchangés). La policy admin update est séparée pour éviter cette récursion.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §6 (sécurité RLS) et §7 (events journal). Tâche fondatrice, doit être faite AVANT PEN-015/016/018.']
+  },
+  {
+    id: 'PEN-014', state: 'pending', priority: 'haute',
+    title: 'Landing page / (Hero + 3 personas + Features + Pricing + Footer) inspirée des 3 visuels',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['landing', 'ui', 'public', 'marketing', 'inspiration'],
+    depends_on: [],
+    objectif: 'Créer une landing page publique sur la route / qui présente Legal Flow aux visiteurs non-connectés. Sections : Hero avec CTA "Créer mon compte" + "Se connecter", 3 personas (Super Admin HQ / Gestionnaire / Entreprise), 6 features inspirées de l\'image 3, 3 tiers pricing (Gratuit / Pro 9 900 FCFA/mois / Cabinet) inspirés de l\'image 2, footer avec liens légaux. Aucun bouton "Espace admin" ni "Console HQ" visible.',
+    contexte: 'Le projet contient 3 visuels de référence dans legal-flow/landing_page/ : (1) dark theme SaaS B2B avec dashboard mockup, (2) light theme ivoirien avec pricing 3 tiers, (3) corporate dense avec 3 personas et 6 features. La spec §2 confirme que / doit être public et qu\'aucun lien "Espace admin" n\'est exposé publiquement. La stack frontend (React + Vite + Tailwind v4) est déjà en place.',
+    etapes: [
+      '1. Ajouter \'landing\' au type PageId dans src/types/index.ts. Ajouter l\'entrée dans pageTitles (App.tsx ligne 442) avec libellé "Accueil".',
+      '2. Créer src/pages/LandingPage.tsx : composant React auto-suffisant, pas de Topbar ni Sidebar. Layout : fond blanc, container max-w-6xl mx-auto, padding généreux.',
+      '3. Section Hero : titre H1 "Ne ratez plus aucune échéance fiscale en Côte d\'Ivoire", sous-titre "TVA, ITS, CN, IGR, CNPS, CMU — calculés et suivis pour vous", 2 CTA "Créer mon compte" (→ /inscription) et "Se connecter" (→ /login). Palette : violet/indigo #4F46A0 + accent orange #C4432B. Style inspiré image 2 (light theme, sobre, ivoirien).',
+      '4. Section Personas : 3 cards côte à côte (Super Admin HQ / Gestionnaire de cabinet / Entreprise). Chacune : icône + titre + 3 bullets descriptifs. PAS de CTA direct "Devenir admin" sur la card Super Admin.',
+      '5. Section Features : grille 2x3 ou 3x2 de 6 features (Échéances intelligentes, Bulletins de paie CNPS/CMU, Veille réglementaire, Score de conformité, Multi-entreprise, Assistant IA juridique). Inspiré image 3.',
+      '6. Section Pricing : 3 cards (Gratuit / Pro 9 900 FCFA/mois / Cabinet sur devis). Card Pro mise en avant (badge "Populaire"). CTA "Choisir" sur chaque card (→ /inscription?type=entreprise ou /inscription?type=cabinet).',
+      '7. Footer : logo Legal Flow + liens "À propos" "Contact" "CGU" "Confidentialité" + copyright.',
+      '8. Dans App.tsx, ajouter la condition : SI !session ET activePage === \'landing\' → <LandingPage />. Modifier la redirection par défaut : si !session, aller à /landing au lieu de /login.',
+      '9. Vérifier que la nav Topbar (quand présente) ne s\'affiche PAS sur /landing (full-page, comme la LoginPage).',
+      '10. Responsive : tester mobile, tablette, desktop.'
+    ],
+    criteres: [
+      '/ affiche la LandingPage sans Topbar ni Sidebar.',
+      'Aucun lien "Espace admin" ou "Console HQ" visible publiquement (vérif spec §2).',
+      'Les 3 personas sont présents (visuels + texte), sans CTA d\'escalade privilégiée.',
+      'Les 3 tiers pricing sont affichés avec prix en FCFA.',
+      'Les CTA "Créer mon compte" et "Se connecter" pointent vers les bonnes routes.',
+      'Le rendu est responsive (mobile OK).',
+      'Aucun import inutile : la page charge vite, pas d\'images lourdes externes.'
+    ],
+    notes: 'Inspiration principale : image 2 (light theme, sobre, palette violet/indigo). Éviter l\'aspect "dark SaaS tech" de l\'image 1 — pas adapté au public ivoirien PME. Conserver la structure 3 personas / 6 features de l\'image 3 pour la densité d\'information. Pas de Tailwind pur CSS-modules : rester sur Tailwind v4 (cohérence stack).',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §2 (routing public/privé) et l\'analyse des 3 visuels dans legal-flow/landing_page/.']
+  },
+  {
+    id: 'PEN-015', state: 'pending', priority: 'haute',
+    title: 'Login — 3 états de session (actif/en_attente/suspendu) + Mot de passe oublié + erreur neutre',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['login', 'auth', 'routing', 'session', 'supabase'],
+    depends_on: ['PEN-013'],
+    objectif: 'Modifier la page de login pour : (1) router selon le statut du profil après signIn (actif → son dashboard, en_attente → /en-attente, suspendu → /suspendu), (2) ajouter un bouton "Mot de passe oublié" qui appelle resetPasswordForEmail, (3) afficher un message d\'erreur NEUTRE en cas d\'échec (pas d\'énumération de compte).',
+    contexte: 'LoginPage.tsx (122 lignes) a déjà le form email/password avec signInWithPassword (App.tsx ligne 362). MAIS après signIn, le code ne lit PAS le statut du profil — il route toujours vers le dashboard du rôle. C\'est une faille spec §3.1 : un cabinet en_attente ne doit pas accéder à l\'app. Côté UX, pas de "mot de passe oublié", et le message d\'erreur révèle si l\'email existe (énumération).',
+    etapes: [
+      '1. Dans App.tsx, après signInWithPassword (ligne 362), récupérer profiles.statut (SELECT statut, role FROM profiles WHERE id = auth.uid()). Ajouter un state postLoginStatus.',
+      '2. Router conditionnel : SI statut=actif → push vers dashboard du rôle (actuel). SI statut=en_attente → push vers /en-attente. SI statut=suspendu → push vers /suspendu. Log via logConnexion(userId) (helper de PEN-013) dans tous les cas où l\'auth a réussi.',
+      '3. Étendre PageId (src/types/index.ts) : ajouter \'en_attente\' et \'suspendu\'. Étendre pageTitles.',
+      '4. Dans LoginPage.tsx, ajouter sous le bouton "Se connecter" un lien "Mot de passe oublié ?". Au clic : ouvrir une modale OU basculer en mode reset avec champ email + bouton "Envoyer le lien".',
+      '5. Câbler resetPasswordForEmail(supabase.auth.resetPasswordForEmail(email, {redirectTo: window.location.origin + \'/login\'})). Afficher message neutre "Si un compte existe pour cet email, un lien de réinitialisation a été envoyé." (PAS de "Cet email n\'existe pas" ni "Email envoyé" success — ce serait de l\'énumération).',
+      '6. Modifier le message d\'erreur existant de signInWithPassword : remplacer "Email ou mot de passe incorrect" par "Identifiants incorrects. Vérifiez votre saisie ou réinitialisez votre mot de passe." (neutre, ne distingue pas email inexistant vs mot de passe faux).',
+      '7. Tests manuels : (a) aminata@legalflow.ci → dashboard. (b) Créer un compte test cabinet en_attente → /en-attente. (c) Forcer un compte suspendu en SQL → /suspendu. (d) Cliquer "Mot de passe oublié" avec un email bidon → message neutre. (e) Mauvais mot de passe → message neutre.'
+    ],
+    criteres: [
+      'Un cabinet en_attente est redirigé vers /en-attente, pas vers l\'app.',
+      'Un compte suspendu est redirigé vers /suspendu, pas vers l\'app.',
+      'Un compte actif est redirigé vers son dashboard selon son rôle.',
+      'Le bouton "Mot de passe oublié" déclenche resetPasswordForEmail.',
+      'Le message d\'erreur est NEUTRE (pas d\'énumération possible).',
+      'Chaque connexion réussie log un event dans le journal.'
+    ],
+    notes: 'Logique de routage à centraliser dans une fonction routeAfterLogin(role, statut) pour la lisibilité. Le helper logConnexion vient de PEN-013.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3 (comportement de connexion) et §7 (events journal). Dépend de PEN-013 pour logConnexion et pour que la policy profiles_select permette de lire role+statut de self.']
+  },
+  {
+    id: 'PEN-016', state: 'pending', priority: 'haute',
+    title: 'Page /inscription (toggle entreprise/cabinet + 2 formulaires) + auto-création Supabase',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['inscription', 'auth', 'supabase', 'rls', 'forms'],
+    depends_on: ['PEN-013'],
+    objectif: 'Créer la page /inscription avec un toggle en haut "Je suis : [Une entreprise] / [Un cabinet – gestionnaire]". Form entreprise → crée auth.users + entreprises + profiles(role=entreprise, statut=actif) + redirige dashboard. Form cabinet → crée auth.users + cabinets + profiles(role=gestionnaire, statut=en_attente) + redirige /en-attente.',
+    contexte: 'Spec §4 décrit 2 flux distincts avec création automatique des entités liées. Aujourd\'hui, les comptes sont créés manuellement en SQL (cf. projet memory §"Comptes initialisés"). Il faut industrialiser. Les tables cabinets et entreprises existent déjà (PEN-001 schéma). Les policies RLS de PEN-013 doivent laisser passer l\'INSERT self : profile.role doit être cohérent avec le type d\'inscription.',
+    etapes: [
+      '1. Ajouter \'inscription\' au type PageId + pageTitles. Créer src/pages/InscriptionPage.tsx (comme LoginPage : pas de Topbar ni Sidebar).',
+      '2. Toggle en haut : 2 boutons "Je suis une entreprise" / "Je suis un cabinet (gestionnaire)". State local typeInscription (\'entreprise\' | \'cabinet\').',
+      '3. Form entreprise : champs = Raison sociale, Email, Mot de passe (min 6), Confirmation mot de passe, Téléphone (optionnel). Validation côté client : email format, password === confirm, password >= 6.',
+      '4. Form cabinet : champs = Raison sociale du cabinet, Nom du gestionnaire, Email, Mot de passe, Confirmation, Ville, N° d\'agrément (texte), Type de cabinet (select : "Comptable", "Juridique", "Audit", "Conseil"). Validation identique.',
+      '5. Au submit (entreprise) : (a) supabase.auth.signUp({email, password, options: {data: {full_name: raisonSociale}}}), (b) INSERT INTO entreprises(raison_sociale, email_contact, telephone) RETURNING id, (c) INSERT INTO profiles(id=auth.uid(), role=\'entreprise\', statut=\'actif\', nom_complet=raisonSociale, entreprise_id=ret.id) — doit passer grâce à policy_insert de PEN-013, (d) logInscriptionEntreprise(userId, entrepriseId) — helper PEN-013, (e) rediriger /login avec un flash "Compte créé, connectez-vous" OU tenter une session automatique (signIn auto après signUp).',
+      '6. Au submit (cabinet) : même logique sauf (b) INSERT INTO cabinets(raison_sociale, nom_gestionnaire, ville, num_agrement, type_cabinet, email_contact), (c) profiles(role=\'gestionnaire\', statut=\'en_attente\', cabinet_id=ret.id), (d) logInscriptionCabinet, (e) rediriger /en-attente (l\'inscription n\'accorde PAS l\'accès app tant que HQ n\'a pas activé).',
+      '7. Gestion d\'erreurs : (a) email déjà pris → "Cet email est déjà utilisé" (OK ici, c\'est à l\'inscription pas au login), (b) erreur INSERT → message générique + log côté Supabase, (c) champs invalides → validation inline.',
+      '8. En bas du form : lien "Déjà un compte ? Se connecter" → /login.',
+      '9. Tests manuels : (a) inscrire une entreprise → vérifier en SQL que la ligne profiles a role=entreprise+statut=actif, (b) inscrire un cabinet → vérifier role=gestionnaire+statut=en_attente, (c) tenter de se connecter avec le compte cabinet → doit atterrir /en-attente.'
+    ],
+    criteres: [
+      'Le toggle entreprise/cabinet fonctionne et bascule le form.',
+      'Inscription entreprise crée bien 3 lignes (auth.users + entreprises + profiles role=entreprise statut=actif).',
+      'Inscription cabinet crée bien 3 lignes (auth.users + cabinets + profiles role=gestionnaire statut=en_attente).',
+      'Un cabinet ne peut PAS accéder à l\'app tant qu\'il n\'est pas activé (spec §4.2.3).',
+      'Les events journal inscription_entreprise / inscription_cabinet sont tracés.',
+      'Un email déjà utilisé affiche un message clair côté UI.',
+      'Password min 6 + confirmation validés côté client.'
+    ],
+    notes: 'La policy profiles_insert de PEN-013 est CRITIQUE ici : elle doit laisser passer (role=entreprise+actif) et (role=gestionnaire+en_attente) mais RIEN d\'autre. Si le dev essaie d\'insérer role=super_admin par accident, ça doit être bloqué. Spec §4.3.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §4 (inscription) et §7 (events journal). Dépend de PEN-013 (policies RLS + helpers logInscription).']
+  },
+  {
+    id: 'PEN-017', state: 'pending', priority: 'haute',
+    title: 'Pages blocantes /en-attente et /suspendu (full-screen, sans nav)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['routing', 'ui', 'session', 'blocker'],
+    depends_on: ['PEN-015'],
+    objectif: 'Créer 2 composants full-screen (pas de Topbar, pas de Sidebar) : /en-attente (compte gestionnaire en attente d\'activation HQ, message + délai estimé + bouton "Se déconnecter") et /suspendu (compte désactivé, message + contact support + bouton "Se déconnecter").',
+    contexte: 'Spec §3.2 et §3.3 : un cabinet en_attente ne doit voir QUE cette page, idem un suspendu. Ni l\'un ni l\'autre ne doit avoir accès à l\'app. PEN-015 redirige vers ces 2 routes. Les helpers logDeconnexion (PEN-013) doivent être câblés sur les boutons.',
+    etapes: [
+      '1. Créer src/pages/EnAttentePage.tsx : full-screen, centré. Logo Legal Flow en haut. Titre "Votre compte est en cours d\'activation". Paragraphe "Notre équipe examine votre dossier sous 24 à 48 heures ouvrées. Vous recevrez un email dès que votre espace sera prêt." Bouton "Se déconnecter" (appelle handleLogout + logDeconnexion).',
+      '2. Créer src/pages/SuspenduPage.tsx : full-screen, centré. Logo Legal Flow. Titre "Votre compte a été suspendu". Paragraphe "Pour comprendre les raisons de cette suspension ou faire une demande de réactivation, contactez notre équipe support à support@legalflow.ci." Bouton "Se déconnecter".',
+      '3. Style commun : fond gris très clair #F6F6FB, card blanche centrée max-w-md, padding généreux, ombre douce. Icône horloge pour /en-attente, icône bouclier-cassé pour /suspendu (lucide-react : Clock, ShieldOff).',
+      '4. Dans App.tsx, ajouter les 2 conditions dans le main (lignes 800-925) : activePage === \'en_attente\' → <EnAttentePage />, activePage === \'suspendu\' → <SuspenduPage />.',
+      '5. CRITIQUE : sur ces 2 pages, NE PAS afficher Topbar ni Sidebar, et ne proposer AUCUN lien de navigation interne (pas de retour dashboard, pas de menu, pas de bouton "Voir profil"). Seul le bouton "Se déconnecter" est visible.',
+      '6. Si un user connecté actif tape /en-attente dans l\'URL : il ne doit PAS voir la page (sinon ça permet de bypass un blocage). Ajouter une garde : SI session.statut === \'actif\' ET activePage === \'en_attente\' → rediriger vers son dashboard. Idem pour /suspendu.',
+      '7. Test : créer un cabinet test, se connecter, vérifier qu\'on atterrit bien sur /en-attente, que la Topbar est absente, que seul le bouton Déconnexion est visible.'
+    ],
+    criteres: [
+      '/en-attente et /suspendu sont full-screen, sans Topbar ni Sidebar.',
+      'Le bouton "Se déconnecter" fonctionne et log un event deconnexion.',
+      'Un user actif ne peut PAS atteindre /en-attente ou /suspendu via URL (redirection auto).',
+      'Aucun lien de navigation interne n\'est cliquable depuis ces 2 pages.',
+      'Les messages sont clairs et donnent une attente (24-48h) ou un contact (support).'
+    ],
+    notes: 'Ces pages sont des "prison" UX : un user bloqué ne doit avoir AUCUN chemin vers l\'app. Toute issue doit passer par support. C\'est une mesure anti-contournement. Le bouton Déconnexion est la SEULE action permise.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.2 et §3.3. Dépend de PEN-015 (qui redirige vers ces routes après signIn).']
+  },
+  {
+    id: 'PEN-018', state: 'pending', priority: 'haute',
+    title: 'HQ — File "Cabinets en attente" + boutons Activer/Refuser + emails + journal',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['hq', 'admin', 'validation', 'rls', 'journal'],
+    depends_on: ['PEN-016', 'PEN-017'],
+    objectif: 'Ajouter au panneau super_admin une section "File d\'attente cabinets" qui liste profiles.role=gestionnaire + statut=en_attente, avec pour chacun : raison sociale, nom gestionnaire, email, n° agrément, date d\'inscription, boutons "Activer" (→ statut=actif + email bienvenue + journal cabinet_active) et "Refuser" (→ modale motif + statut=suspendu + email refus + journal cabinet_refuse).',
+    contexte: 'Spec §5 : seul super_admin peut activer un cabinet. Aujourd\'hui cette activation se fait en SQL à la main (cf. projet memory). Il faut une UI pour l\'équipe HQ. La policy profiles_update_admin de PEN-013 permet au super_admin de muter role+statut. Les helpers logCabinetActive / logCabinetRefuse viennent de PEN-013. L\'envoi d\'email peut se faire via Supabase (template) ou via un edge function.',
+    etapes: [
+      '1. Ajouter une nouvelle entrée dans superAdminNavItems (Sidebar.tsx) : "File d\'attente cabinets", icône UserCheck, route \'super_admin_cabinets_attente\'. Étendre PageId + pageTitles.',
+      '2. Créer src/pages/CabinetsEnAttentePage.tsx : composant React qui SELECT profiles JOIN cabinets WHERE profiles.role=\'gestionnaire\' AND profiles.statut=\'en_attente\', trié par created_at ASC (les plus anciens d\'abord).',
+      '3. Affichage : table avec colonnes [Raison sociale | Gestionnaire | Email | N° agrément | Ville | Type | Inscrit le | Actions]. Actions = 2 boutons "Activer" (vert) et "Refuser" (rouge).',
+      '4. Bouton "Activer" : (a) confirmation modale "Confirmer l\'activation de [raison sociale] ?", (b) UPDATE profiles SET statut=\'actif\' WHERE id=... (utilise policy_update_admin de PEN-013), (c) UPDATE cabinets SET date_activation=now() WHERE id=..., (d) INSERT journal_evenements action=\'cabinet_active\' (helper logCabinetActive), (e) envoi email bienvenue (template Supabase ou edge function : "Votre espace Cabinet est prêt, connectez-vous à..."), (f) toast "Cabinet activé", (g) rafraîchir la liste.',
+      '5. Bouton "Refuser" : (a) modale avec textarea "Motif du refus (sera envoyé au cabinet)", obligatoire, (b) UPDATE profiles SET statut=\'suspendu\' WHERE id=..., (c) INSERT journal action=\'cabinet_refuse\' avec metadata={motif}, (d) envoi email refus avec motif, (e) toast, (f) refresh.',
+      '6. Si 0 cabinet en attente : message vide "Aucun cabinet en attente pour le moment."',
+      '7. Sécuriser l\'accès : cette page n\'est visible QUE pour super_admin. Si un gestionnaire tape l\'URL → redirection vers son espace.',
+      '8. Tests manuels : (a) inscrire un cabinet test via /inscription, (b) se connecter en aminata@legalflow.ci, (c) aller sur "File d\'attente", (d) cliquer Activer → vérifier en SQL que statut=actif + event journal, (e) tester Refuser avec motif → vérifier.'
+    ],
+    criteres: [
+      'La page liste correctement les cabinets en_attente triés par date.',
+      'Le bouton Activer passe statut=actif + log cabinet_active + email envoyé.',
+      'Le bouton Refuser demande un motif + passe statut=suspendu + log cabinet_refuse + email envoyé.',
+      'Seul super_admin voit cette page (test avec cabinet@auditconseils.ci → redirection).',
+      'La liste se rafraîchit après action sans recharger la page.',
+      'Les events cabinet_active et cabinet_refuse sont présents dans le journal.'
+    ],
+    notes: 'Pour l\'envoi d\'emails, le plus rapide est d\'utiliser les Supabase Auth templates (sendMail via une edge function ou un trigger SQL). Si trop complexe en V1, stubber avec un console.log + un event journal "email_sent" (action future = vraie intégration SMTP/Resend). Spec §5 ne précise pas le canal, c\'est une décision dev.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §5 (panneau admin HQ) et §7 (events journal). Dépend de PEN-016 (pour avoir des cabinets à activer) et PEN-017 (cohérence UX avec les pages blocantes).']
+  },
+  {
+    id: 'PEN-019', state: 'pending', priority: 'haute',
+    title: 'Garde-fous de routing : redirect /login si pas de session, redirect espace propre si mauvais rôle, sur chaque page protégée',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['routing', 'auth', 'securite', 'rls'],
+    depends_on: ['PEN-010'],
+    objectif: 'Garantir qu\'aucune page protégée n\'est accessible sans session, et qu\'un user avec un rôle donné ne peut pas atteindre une page d\'un autre rôle via URL. Créer un helper ProtectedRoute (ou logique dans App.tsx) qui : (1) si !session → push /login, (2) si session mais rôle≠page requise → push espace propre du rôle, (3) log les tentatives d\'accès interdit (event journal "acces_refuse").',
+    contexte: 'Aujourd\'hui le routage par rôle est centralisé dans App.tsx (lignes 800-925 du résumé) mais il est possible de bypasser via URL ou via React state. Avec les nouvelles pages (Landing, Inscription, EnAttente, Suspendu, CabinetsEnAttente), la matrice rôle×route devient non triviale. Spec §3.4 exige que chaque page soit gardée.',
+    etapes: [
+      '1. Lister la matrice rôle × route autorisée (cf. spec §2) : super_admin → tout SAUF /login, /inscription, /en-attente (lui est actif), /suspendu. gestionnaire actif → son dashboard + pages de ses clients. entreprise actif → dashboard + pages de son entreprise. NON connecté → /landing, /login, /inscription UNIQUEMENT.',
+      '2. Créer src/services/routeGuard.ts (ou intégrer dans App.tsx) avec une fonction canAccess(role: UserRole | null, page: PageId): boolean.',
+      '3. Au mount de App.tsx et à chaque changement de activePage, vérifier canAccess. Si false : (a) push vers /login si !session, (b) push vers espace propre du rôle si session mais rôle≠, (c) log event "acces_refuse" avec metadata={requested_page, user_role}.',
+      '4. Helper getDefaultPageForRole(role): PageId : super_admin → super_admin_dashboard, gestionnaire → gestionnaire_dashboard, entreprise → dashboard.',
+      '5. Appliquer aussi côté UI : si currentRole === \'utilisateur\' (entreprise), masquer les entrées Sidebar des autres rôles. Déjà en partie fait par PEN-011, mais doubler avec une vérif runtime.',
+      '6. Test : (a) non connecté, taper /super-admin-dashboard → /login, (b) connecté en entreprise, taper /super-admin-cabinets-attente → /dashboard, (c) vérifier que les events acces_refuse sont tracés.'
+    ],
+    criteres: [
+      'Aucun accès à une page protégée sans session.',
+      'Aucun accès à une page hors périmètre du rôle.',
+      'Les redirections mènent à l\'espace propre du rôle (pas juste /login).',
+      'Les tentatives d\'accès interdit sont tracées dans le journal.',
+      'La matrice rôle × route est documentée dans le code (commentaire en tête de routeGuard.ts).',
+      'Les URLs directes (refresh, partage de lien) sont gérées (le guard s\'exécute aussi au mount).'
+    ],
+    notes: 'Ce guard est la dernière ligne de défense. La sécurité réelle est dans les RLS (PEN-013), mais ce guard évite les écrans vides et les bugs UX. Ne PAS dupliquer la logique RLS côté frontend — l\'objectif est uniquement l\'UX et le routage.',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.4 (garantie routing par rôle). Dépend de PEN-010 (cleanup mode démo) pour que useRealAuth soit la seule source de vérité.']
+  },
+  {
+    id: 'PEN-020', state: 'pending', priority: 'moyenne',
+    title: 'Recette des 10 critères d\'acceptation de la spec (dont test SQL refus INSERT super_admin)',
+    created: '2026-09-05', updated: '2026-09-05',
+    tags: ['recette', 'qa', 'sql', 'acceptance'],
+    depends_on: ['PEN-013', 'PEN-014', 'PEN-015', 'PEN-016', 'PEN-017', 'PEN-018', 'PEN-019'],
+    objectif: 'Passer en revue les 10 critères d\'acceptation de la spec (cf. fin du brief) et prouver chacun par un test reproductible (SQL ou manuel documenté). Bilan dans un fichier ACCEPTANCE.md à la racine, à cocher critère par critère.',
+    contexte: 'Spec fournie par le user le 5 sept. 2026 liste 10 critères d\'acceptation. Sans recette formelle, on ne peut pas affirmer "c\'est livré". Cette tâche est la dernière du chantier — elle ne s\'exécute qu\'après PEN-013 à 019.',
+    etapes: [
+      '1. Créer ACCEPTANCE.md à la racine du repo avec une section par critère (1 à 10).',
+      '2. Pour chaque critère : statut (✅ / ❌), commande SQL ou procédure manuelle, résultat attendu, résultat observé.',
+      '3. Critère 1 (auth réelle obligatoire) : grep -r "RoleSwitcher" src/ doit retourner vide (cf. PEN-010).',
+      '4. Critère 2 (RLS INSERT super_admin refusé) : test SQL critique — connecté en aminata@legalflow.ci, faire INSERT INTO profiles (id=auth.uid(), role=\'super_admin\') → doit échouer. Documenter la commande exacte et le message d\'erreur retourné.',
+      '5. Critère 3 (énumération bloquée) : mauvais mot de passe sur /login → message NEUTRE identique à email inexistant.',
+      '6. Critère 4 (routing par statut) : cabinet en_attente → /en-attente, suspendu → /suspendu, actif → dashboard.',
+      '7. Critère 5 (inscription entreprise = auto-actif) : SQL check après inscription.',
+      '8. Critère 6 (inscription cabinet = en_attente) : idem.',
+      '9. Critère 7 (HQ peut activer/refuser) : test manuel via la page CabinetsEnAttente.',
+      '10. Critère 8 (Landing publique sans lien admin) : grep -r "Espace admin\\|Console HQ" src/pages/LandingPage.tsx doit retourner vide.',
+      '11. Critère 9 (journal complet) : SELECT action FROM journal_evenements GROUP BY action doit montrer les 6 nouveaux events + les anciens.',
+      '12. Critère 10 (gates Topbar fixes) : test visuel des 3 rôles → badge nom+rôle fixe, pas de sélecteur.',
+      '13. Commit ACCEPTANCE.md une fois tous critères cochés.'
+    ],
+    criteres: [
+      'ACCEPTANCE.md existe à la racine.',
+      'Chaque critère a un statut, une procédure, un résultat observé.',
+      'Le test SQL refus INSERT super_admin est documenté avec la commande exacte et l\'erreur retournée.',
+      'Tous les critères sont ✅ (ou listés en 🔴 si échec, avec plan d\'action).',
+      'Un commit final marque la fin du chantier.'
+    ],
+    notes: 'Cette tâche est DOCUMENTAIRE. Pas de code à écrire (sauf d\'éventuels correctifs si un critère échoue → créer une sous-tâche PEN-021+). Le commit final peut être "chore: spec authentification livrée, ACCEPTANCE.md complet".',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" — 10 critères d\'acceptation. Tâche de clôture du chantier.']
   }
 ];
 
