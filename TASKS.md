@@ -1,5 +1,8 @@
 # Tâches — LEGAL-FLOW
 
+> Référence actuelle : **`kanban.html`** (tableau : Backlog / À faire / En cours / Terminé).
+> Ce fichier garde l'historique résumé ; le kanban fait foi pour l'état courant.
+
 Suivi local en markdown. Remplace la base Notion « Tâches » (espace « IT dc knowing »),
 abandonnée car Notion ne fonctionne pas côté poste (MCP `notion` désactivé dans `opencode.json`).
 

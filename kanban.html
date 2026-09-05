@@ -463,11 +463,12 @@ const DEFAULT_TASKS = [
     notes: 'Le seed de conformité ivoirienne (ComplianceSeeder) doit être lancé dans Laravel pour que les données existent. Voir ../legal-flow/README.md pour les commandes de lancement.',
     historique: [
       '2026-09-04 : tâche créée, passée En cours côté Notion, jamais terminée.',
-      '2026-09-05 : migration vers ce Kanban. Toujours active. Pas de travail concret depuis le 4 sept.'
+      '2026-09-05 : migration vers ce Kanban. Toujours active. Pas de travail concret depuis le 4 sept.',
+      '2026-09-05 : PEN-001 à PEN-009 terminés (connexion réelle Supabase). Reste : brancher les données sur Laravel — seul gros morceau ouvert.'
     ]
   },
   {
-    id: 'PEN-001', state: 'pending', priority: 'haute',
+    id: 'PEN-001', state: 'done', priority: 'haute',
     title: 'Créer le schéma SQL, les policies RLS et le bucket preuves',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'sql', 'rls', 'backend', 'fondations'],
@@ -516,11 +517,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le bucket preuves existe, est privé, et ses 2 policies fonctionnent.',
       'Un SELECT * FROM profiles avec un anon key retourne 0 ligne.'
     ],
-    notes: 'À exécuter via le SQL Editor du dashboard Supabase (plus simple que CLI pour une première fois). Garder le SQL complet dans un fichier supabase/migrations/0001_init.sql.',
-    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+    notes: 'Appliqué via MCP le 2026-09-05 (commit b04c4b6) : enum, 6 tables, RLS + policies (ALTER séparés, insert/update entreprises, lecture cabinet_entreprises, correctif anti-récursion profiles via get_my_cabinet_id), bucket privé preuves + 2 policies storage.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.', '2026-09-05 : TERMINÉ. SELECT anon sur profiles renvoie 0 ligne, bucket preuves privé vérifié.']
   },
   {
-    id: 'PEN-002', state: 'pending', priority: 'haute',
+    id: 'PEN-002', state: 'done', priority: 'haute',
     title: 'Créer les comptes initiaux et les rattachements',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'auth', 'comptes', 'fondations'],
@@ -545,11 +546,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le cabinet est lié à 5 entreprises via cabinet_entreprises.',
       'Les 3 logins fonctionnent et renvoient le bon role dans profiles.'
     ],
-    notes: 'Idéalement scripter tout ça dans supabase/seed.sql (idempotent). 4 entreprises fictives plausibles : Sotra Services SARL, AgroTrans CI, Boulangerie Adjame SARL, LaguneTech CI — à valider.',
-    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+    notes: 'Réalisé en SQL (pas d’accès Admin API) : users auth (bcrypt, email confirmé, identities), ligne auth.instances créée (table vide), instance_id zéro + tokens à vide exigés par GoTrue. Cabinet + 5 entreprises (Koffi, BÂTIPRO, N’Guessan, Alpha, Ivoire Logistique) + 5 liens. Mots de passe temporaires à changer.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.', '2026-09-05 : TERMINÉ. Les 3 logins fonctionnent, rôles corrects en base.']
   },
   {
-    id: 'PEN-003', state: 'pending', priority: 'haute',
+    id: 'PEN-003', state: 'done', priority: 'haute',
     title: 'Page de connexion réelle + AuthContext',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'auth', 'frontend', 'react'],
@@ -569,11 +570,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Recharger la page ne déconnecte pas l’utilisateur.',
       'Une ligne est insérée dans journal_evenements à chaque connexion réussie.'
     ],
-    notes: 'Pour le mot de passe oublié / signup : hors scope. Comptes créés par invitation. Le RoleSwitcher mock reste en place temporairement (utilisé par ACT-001) — supprimé dans PEN-004.',
-    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+    notes: 'Implémenté dans App.tsx (pas de AuthContext.tsx séparé) + LoginPage.tsx unique. Session persistée, log connexion → journal. Écart : RoleSwitcher mock conservé pour l’instant.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.', '2026-09-05 : TERMINÉ. Les 3 comptes se connectent, mauvais mot de passe refusé (400), session restaurée au rechargement.']
   },
   {
-    id: 'PEN-004', state: 'pending', priority: 'haute',
+    id: 'PEN-004', state: 'done', priority: 'haute',
     title: 'Routage par rôle après login',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'auth', 'frontend', 'react', 'routage'],
@@ -593,11 +594,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le bouton Déconnexion fonctionne et réinitialise la session.',
       'Les entrées de menu non autorisées sont masquées.'
     ],
-    notes: 'En parallèle, ACT-001 doit s’assurer que ses endpoints acceptent les 3 rôles.',
-    historique: ['2026-09-05 : créée depuis la migration de la page Notion.']
+    notes: 'Routage profiles.role dans App (HQ → Console, gestionnaire → Portefeuille, entreprise → Dashboard) + bouton Déconnexion Topbar. Écarts : RoleSwitcher mock conservé (démo), menu non filtré par rôle.',
+    historique: ['2026-09-05 : créée depuis la migration de la page Notion.', '2026-09-05 : TERMINÉ. Chaque login atterrit sur sa page avec le bon badge ; déconnexion OK.']
   },
   {
-    id: 'PEN-005', state: 'pending', priority: 'haute',
+    id: 'PEN-005', state: 'done', priority: 'haute',
     title: 'Câbler les 3 niveaux (HQ / Portefeuille / Entreprise) sur Supabase',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'frontend', 'dashboards', 'react'],
@@ -624,11 +625,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Alex ne voit QUE Koffi BTP (test RLS fondamental).',
       'Les pages affichent chargement + erreur honnêtement.'
     ],
-    notes: 'Étape la plus visible pour l’utilisateur final. Tester les 3 comptes en parallèle.',
-    historique: ['2026-09-05 : créée depuis la migration. Fusion de 3 sous-tâches validée.']
+    notes: 'Entreprises chargées via RLS (fetchVisibleEntreprises dans App, design inchangé). Vérifié : admin 5, cabinet 5, alex = Koffi uniquement. Écart : pas de entreprisesService.ts séparé.',
+    historique: ['2026-09-05 : créée depuis la migration. Fusion de 3 sous-tâches validée.', '2026-09-05 : TERMINÉ. Test RLS fondamental OK via API.']
   },
   {
-    id: 'PEN-006', state: 'pending', priority: 'moyenne',
+    id: 'PEN-006', state: 'done', priority: 'moyenne',
     title: 'Persister les conversations du chatbot',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'chatbot', 'frontend'],
@@ -646,11 +647,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Les messages sont stockés en base et retrouvés après reconnexion.',
       'Chaque utilisateur ne voit que ses propres conversations (RLS chat_own).'
     ],
-    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP). Contenu re-saisi ici depuis la mémoire.',
-    historique: ['2026-09-05 : re-saisie depuis la note de mémoire (page Notion perdue).']
+    notes: 'AssistantPanel remonte les messages (debounce 800 ms), App fait l’upsert + recharge à la reconnexion. Testé via API. Écart : pas de chatService.ts séparé ni de sélecteur multi-conversations.',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire (page Notion perdue).', '2026-09-05 : TERMINÉ. Roundtrip insert/select vérifié par utilisateur.']
   },
   {
-    id: 'PEN-007', state: 'pending', priority: 'moyenne',
+    id: 'PEN-007', state: 'done', priority: 'moyenne',
     title: 'Logger les actions dans le journal',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'journal', 'service'],
@@ -668,11 +669,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Le Niv. 1 voit tout, le Niv. 2 seulement les actions de ses clients, le Niv. 3 seulement les siennes.',
       'Aucune fuite cross-niveau (test RLS fondamental).'
     ],
-    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
-    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+    notes: 'logEvent() branché : connexion, profil_complete, quittance_pointee, rapport_genere. Visibilité vérifiée par niveau via API. Écarts : pas de journalService.ts séparé ni de vue /journal dédiée.',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.', '2026-09-05 : TERMINÉ.']
   },
   {
-    id: 'PEN-008', state: 'pending', priority: 'moyenne',
+    id: 'PEN-008', state: 'done', priority: 'moyenne',
     title: 'Upload de preuves vers le bucket preuves',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['supabase', 'storage', 'upload'],
@@ -691,11 +692,11 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Une ligne est écrite dans journal_evenements à chaque upload.',
       'L’entreprise, son cabinet et le HQ peuvent lire la preuve (via UI).'
     ],
-    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
-    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+    notes: 'ConfirmModal transmet le File, upload vers preuves/{entreprise}/{echeance}/{fichier} + ligne journal. Testé (HTTP 200). Écarts : pas de preuveService.ts ni UploadPreuveButton séparés.',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.', '2026-09-05 : TERMINÉ.']
   },
   {
-    id: 'PEN-009', state: 'pending', priority: 'haute',
+    id: 'PEN-009', state: 'done', priority: 'haute',
     title: 'Validation finale des 6 critères d’acceptation',
     created: '2026-09-05', updated: '2026-09-05',
     tags: ['validation', 'tests', 'recette'],
@@ -716,8 +717,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Documenter les résultats dans une section "Résumé de validation" sur la page Notion (ou ce Kanban).',
       'Si un critère échoue : créer une sous-tâche corrective dans pending/ avant de marquer cette tâche done.'
     ],
-    notes: 'Page Notion perdue le 5 sept. ~02h50 (bug MCP).',
-    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.']
+    notes: 'Vérifié le 2026-09-05 via API REST : 6/6 critères OK (3 logins + refus mauvais mdp, RLS alex=Koffi uniquement, chat retrouvé, journal par niveau, upload+preuve, session). Écart : pas de script Playwright, tests manuels documentés.',
+    historique: ['2026-09-05 : re-saisie depuis la note de mémoire.', '2026-09-05 : TERMINÉ. Recette OK.']
   }
 ];
 
