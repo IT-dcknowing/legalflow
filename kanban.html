@@ -1430,6 +1430,215 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Google = compte entreprise/actif uniquement (pas de cabinet via Google en V1). Test navigateur à faire côté utilisateur (OAuth non automatisable d’ici).',
     historique: ['2026-09-06 : créé à la demande (Google activé sur Supabase).', '2026-09-06 : TERMINÉ côté code, à tester dans le navigateur.']
+  },
+  // ============================================================
+  // TÂCHES QA V1.1 — 2026-09-06 (suite à QA-REPORT-V1-2026-09-06.md)
+  // ============================================================
+  {
+    id: 'LF-16', state: 'active', priority: 'haute',
+    title: 'BUG-V1-07 (P0) : <main> vide quand activePage=landing et utilisateur connecté',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p0', 'frontend', 'routing', 'app.tsx'],
+    depends_on: [],
+    objectif: 'Corriger le bug critique où l\'utilisateur connecté voit Sidebar+Topbar mais un <main> totalement vide. Cause : useState initial activePage=\'landing\' (App.tsx:106) + landing uniquement rendu dans le guard public (App.tsx:762). Aucun case \'landing\' dans le bloc <main> post-connexion.',
+    contexte: 'Rapport QA V1.1 §7.1. Preuves DOM : main.innerHTML.length=0, pageAccueil absent, h2Count=0. Reproduit sur localhost:3000 avec session Supabase active côté backend (LS/SS/cookies vides côté sandbox).',
+    etapes: [
+      'Option A (minimal) : ajouter {activePage === \'landing\' && <AccueilPage onNavigate={handleNavigate} />} dans <main> après les autres cas (App.tsx après ligne 953).',
+      'Option B (propre) : useEffect sur authUserId/dbProfile → setActivePage(routeAfterLogin(role, statut)).',
+      'Option C (garde miroir) : si useRealAuth && authUserId && activePage===\'landing\' → setActivePage(routeAfterLogin(...)).',
+      'Tester : login → vérifier hero "Bienvenue sur Legal Flow" visible + Sidebar 11 boutons (au lieu de 4).',
+      'Vérifier navigation : landing publique → login → accueil → clic Dashboard → retour Accueil cohérent.'
+    ],
+    criteres: [
+      'document.querySelector(\'main\').innerHTML.length > 0 après login.',
+      'document.getElementById(\'pageAccueil\') !== null après login.',
+      'Sidebar affiche toutes les pages du rôle (entreprise: 11 boutons, gestionnaire: 4 boutons portfolio).',
+      'Topbar H1 reste cohérent (pas de saut "Accueil" → autre → "Accueil" lors des nav).',
+      'Lint + tests + build verts après correction.'
+    ],
+    notes: 'À traiter EN PRIORITÉ (P0). Bloque l\'expérience utilisateur connecté. Aucun workaround côté UI.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.1, capture utilisateur + DOM inspection.']
+  },
+  {
+    id: 'LF-17', state: 'pending', priority: 'basse',
+    title: 'BUG-V1-08 (P2 UX) : pageTitles.landing et pageTitles.accueil dupliquent "Accueil"',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p2', 'ux', 'topbar', 'app.tsx'],
+    depends_on: [],
+    objectif: 'Distinguer les labels Topbar pour landing publique et accueil connectée.',
+    contexte: 'Rapport QA V1.1 §7.2. App.tsx:516 (landing: \'Accueil\') et 521 (accueil: \'Accueil\') identiques. Confond landing publique et tableau de bord.',
+    etapes: [
+      'Choisir : landing → "Bienvenue" ou "Portail public" ; accueil → "Mon tableau de bord" (et aligner avec routeAfterLogin si pertinent).',
+      'Vérifier que ce label apparaît aussi dans les meta title <head> si pertinent.',
+      'Tester la nav entre landing publique (déconnecté) et accueil (connecté).'
+    ],
+    criteres: [
+      'Topbar H1 diffère visiblement entre landing et accueil.',
+      'Aucun autre label dupliqué dans pageTitles.',
+      'Lint + build verts.'
+    ],
+    notes: 'Trivial, à coupler avec LF-16 si possible.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.1.']
+  },
+  {
+    id: 'LF-18', state: 'pending', priority: 'haute',
+    title: 'Migrer index pgvector IVFFlat → HNSW (BDD-002 AUDIT_REPORT2)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p1', 'bdd', 'rag', 'pgvector', 'performance'],
+    depends_on: [],
+    objectif: 'Remplacer IVFFlat par HNSW dans src/data/supabaseSchema.sql:251 pour éviter les centroïdes erronés sur table peu seedée (précision RAG dégradée).',
+    contexte: 'Rapport QA V1 §4 BDD-002. AUDIT_REPORT2 demandait déjà cette migration (P0). Non corrigée.',
+    etapes: [
+      'DROP INDEX IF EXISTS idx_documents_juridiques_embedding;',
+      'CREATE INDEX idx_documents_juridiques_embedding_hnsw ON public.documents_juridiques USING hnsw (embedding vector_cosine_ops);',
+      'Recréer la fonction RPC match_documents avec seuil similarité > 0.5 (BDD-003).',
+      'Rebuild après seed complet (volumétrie cible).',
+      'Tester /api/rag/search avec 5 requêtes différentes, vérifier que les top-3 résultats sont pertinents.'
+    ],
+    criteres: [
+      'Index HNSW créé sans erreur sur Supabase.',
+      'match_documents retourne des résultats avec similarity > 0.5 sur seed ivoirien.',
+      'Aucun résultat hors-sujet (vérif manuelle sur 20 requêtes).',
+      'Latence /api/rag/search < 500ms p95.'
+    ],
+    notes: 'Bloque la qualité RAG en production si seed < quelques milliers de documents.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1 (audit statique + grep).']
+  },
+  {
+    id: 'LF-19', state: 'pending', priority: 'moyenne',
+    title: 'Ajouter index idx_documents_entreprise_id (BDD-001 AUDIT_REPORT)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p1', 'bdd', 'rls', 'performance'],
+    depends_on: [],
+    objectif: 'Créer l\'index manquant sur documents(entreprise_id) pour accélérer les jointures RLS.',
+    contexte: 'Rapport QA V1 §4 BDD-001. grep actuel : idx_gestion_active OK mais pas d\'index explicite idx_documents_entreprise.',
+    etapes: [
+      'CREATE INDEX IF NOT EXISTS idx_documents_entreprise ON public.documents(entreprise_id);',
+      'Vérifier EXPLAIN ANALYZE sur 3 requêtes RLS courantes (fetchVisibleEntreprises, fetchEcheances, fetchDocuments).',
+      'Documenter dans supabaseSchema.sql.'
+    ],
+    criteres: [
+      'Index créé, EXPLAIN montre Index Scan au lieu de Seq Scan sur la table documents.',
+      'Latence fetchVisibleEntreprises < 200ms p95 avec 100 entreprises seedées.'
+    ],
+    notes: 'Effort minimal, gain perf immédiat en montée en charge.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.']
+  },
+  {
+    id: 'LF-20', state: 'pending', priority: 'moyenne',
+    title: 'Code-split bundle principal (1042 kB → < 500 kB) via React.lazy',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p2', 'frontend', 'bundle', 'performance', 'react-lazy'],
+    depends_on: [],
+    objectif: 'Réduire la taille du bundle principal dist/assets/index-*.js (1042 kB minifié, 290 kB gzip) sous le seuil Vite warning 500 kB via dynamic imports.',
+    contexte: 'Rapport QA V1 §1.2 W2 + AUDIT_REPORT2 P1.3. Pages lourdes : LandingPage, AssistantPanel, SimulatorModal, ReportPdfModal (déjà chunké), CostSimulationDrawer (déjà chunké).',
+    etapes: [
+      'Identifier les imports synchrones dans App.tsx pour LandingPage, AssistantPanel, SimulatorModal.',
+      'Convertir en React.lazy() avec Suspense fallback (skeleton loader).',
+      'Re-builder, vérifier nouveaux chunks.',
+      'Mesurer TTI/LCP via Lighthouse sur localhost:3000.'
+    ],
+    criteres: [
+      'dist/assets/index-*.js < 500 kB minifié (warning Vite disparu).',
+      'Tous les chunks lazy ont un fallback visuel pendant le chargement (pas d\'écran blanc).',
+      'Aucune régression fonctionnelle (les pages s\'ouvrent normalement après le lazy load).',
+      'Lint + tests + build verts.'
+    ],
+    notes: 'Audit AUDIT_REPORT2 P1.3 inchangé depuis la rédaction initiale.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.']
+  },
+  {
+    id: 'LF-21', state: 'pending', priority: 'moyenne',
+    title: 'Étendre Vitest au serveur Express (server.ts, middlewares, legalRagEngine)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p2', 'tests', 'coverage', 'supertest'],
+    depends_on: [],
+    objectif: 'Atteindre > 80 % de couverture lignes sur server/ (actuellement 0 %).',
+    contexte: 'Rapport QA V1 §1.3 + AUDIT_REPORT2 P0.3. Vitest couvre 92 % des moteurs métier mais 0 % du serveur Express. Risque régression élevé sur requireAuth, apiLimiter, circuit breaker, RAG.',
+    etapes: [
+      'Installer supertest + @types/supertest.',
+      'Créer server/__tests__/auth.test.ts : 401 sans token, 401 token bidon, 200 avec token mocké.',
+      'Créer server/__tests__/ratelimit.test.ts : 31 requêtes → 429.',
+      'Créer server/__tests__/zod.test.ts : 400 sur body invalide.',
+      'Créer server/__tests__/rag.test.ts : mock Supabase + vérifier appel match_documents.',
+      'Mock circuit breaker pour tester fallback déterministe.'
+    ],
+    criteres: [
+      'Coverage v8 sur server/ > 80 % lignes.',
+      'Tous les tests passent (npm run test:run).',
+      'npm run test:coverage affiche le % server/ dans le rapport.'
+    ],
+    notes: 'Nécessite de mocker supabase-js (createClient) et xenova/transformers.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.']
+  },
+  {
+    id: 'LF-22', state: 'pending', priority: 'basse',
+    title: 'Résoudre double-import supabaseClient.ts (dynamique + statique)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'bug-p2', 'frontend', 'vite', 'imports'],
+    depends_on: [],
+    objectif: 'Aligner tous les imports de supabaseClient sur un seul mode (statique ou dynamique).',
+    contexte: 'Rapport QA V1 §1.2 W1. Vite warning : supabaseClient.ts importé dynamiquement par AssistantPanel.tsx ET statiquement par 5 autres fichiers (App.tsx, CabinetsEnAttentePage.tsx, JournalPage.tsx, inscriptionService.ts, journalEvents.ts).',
+    etapes: [
+      'Choisir : tout statique (plus simple) ou tout dynamique (lazy load).',
+      'Si statique : retirer import() dynamique dans AssistantPanel.tsx.',
+      'Si dynamique : convertir les 5 imports statiques en React.lazy.',
+      'Re-builder, vérifier disparition du warning Vite.'
+    ],
+    criteres: [
+      'Warning Vite W1 disparu dans npm run build.',
+      'Aucun changement fonctionnel (AssistantPanel fonctionne comme avant).'
+    ],
+    notes: 'Trivial à faire.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1.']
+  },
+  {
+    id: 'LF-23', state: 'pending', priority: 'moyenne',
+    title: 'Vague QA V2 : Playwright E2E + reverification 7 anomalies AUDIT_REPORT',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'e2e', 'playwright', 'acceptation'],
+    depends_on: ['LF-16'],
+    objectif: 'Clôturer les 3 critères ⚠️ ACCEPTANCE.md non validés visuellement + reverifier les 7 anomalies AUDIT_REPORT non couvertes par V1.',
+    contexte: 'Rapport QA V1 §3.2 + ACCEPTANCE.md. Travail QA V2 = 1/2 journée.',
+    etapes: [
+      'Installer playwright + @playwright/test, créer tests/e2e/.',
+      'Test E2E Critère 3 : login avec email inexistant → message neutre identique à mdp faux.',
+      'Test E2E Critère 4 : login cabinet en_attente → page /en-attente, pas de fuite vers dashboard.',
+      'Test E2E Critère 10 : login 3 rôles (super_admin/gestionnaire/entreprise) → Topbar badge coloré correct.',
+      'Grep/revérifier : LOG-002 (tri dates ISO), LOG-003 (pénalité -retards*16), LOG-004 (règles événementielles CHSCT).',
+      'Grep/revérifier : COD-002 (duplication transformers), COD-003 (magic numbers), COD-005 (deps ^).',
+      'Grep/revérifier : UI-002 (validation email LoginPage), UI-003 (loader stylisé vs "Chargement de la session..." brut).',
+      'Rédiger rapport QA-V2-2026-09-XX.md.'
+    ],
+    criteres: [
+      '3 critères ACCEPTANCE.md basculés de ⚠️ à ✅.',
+      '7 anomalies AUDIT_REPORT reverifiées (✅ ou ❌ selon cas).',
+      'Rapport QA V2 livré dans le repo.'
+    ],
+    notes: 'Bloqué par LF-16 si login UI cassé.',
+    historique: ['2026-09-06 : détecté par Hermes QA V1, tâches créées pour V2.']
+  },
+  {
+    id: 'PEN-037', state: 'pending', priority: 'haute',
+    title: 'Finaliser le wrapper Firebase Auth (sa_key_id Vault + test lecture)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['supabase', 'firebase', 'fdw', 'vault', 'auth'],
+    depends_on: [],
+    objectif: 'Rendre SELECT * FROM firebase.users fonctionnel : stocker la clé service Firebase dans Vault, renseigner sa_key_id sur le serveur, tester la lecture.',
+    contexte: 'Schéma firebase + serveur firebase_auth_server + table firebase.users créés via MCP (migration 0007). Le SELECT échoue : required option sa_key_id is not specified. La clé service ne peut venir que de la console Firebase (autre compte).',
+    etapes: [
+      'Utilisateur : Firebase console (legalflowio) → Project Settings → Service accounts → Generate new private key → télécharger le JSON.',
+      'Utilisateur : Supabase dashboard → SQL editor → select vault.create_secret(\'<JSON>\', \'firebase_sa\', \'...\') → copier le UUID retourné.',
+      'Dev : ALTER SERVER firebase_auth_server OPTIONS (ADD sa_key_id \'<uuid>\').',
+      'Dev : SELECT * FROM firebase.users LIMIT 5 → doit retourner les utilisateurs.',
+      'Décider de l’usage : simple lecture/audit, ou vraie intégration auth (auquel cas : third-party auth JWKS, autre chantier).'
+    ],
+    criteres: [
+      'SELECT * FROM firebase.users LIMIT 5 retourne des lignes.',
+      'La clé privée n’apparaît dans aucun chat, fichier ou log (Vault uniquement).',
+    ],
+    notes: 'Le wrapper donne un ACCÈS LECTURE à la liste Firebase. Il ne connecte personne et n’alimente ni Supabase Auth ni RLS.',
+    historique: ['2026-09-06 : créé (infra prête, bloqué sur clé service).']
   }
 ];
 
