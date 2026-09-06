@@ -1039,6 +1039,30 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" — 10 critères d\'acceptation. Tâche de clôture du chantier.', '2026-09-05 : TERMINÉ. 7 critères ✅ prouvés, 3 partiels (⚠️ visuel navigateur / emails stub / rate limit). Voir ACCEPTANCE.md.']
   },
   {
+    id: 'PEN-036', state: 'done', priority: 'haute',
+    title: 'Firebase Hosting : config + SDK + build déployable (projet legalflowio)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['firebase', 'hosting', 'deploy', 'spa'],
+    depends_on: [],
+    objectif: 'Déployer le frontend sur Firebase Hosting (projet legalflowio) : firebase.json (dist + rewrite SPA + cache assets), .firebaserc, SDK Firebase initialisé dans le code, build prod vérifié, serving validé via émulateur.',
+    contexte: 'Firebase réservé à l’hébergement + console (autre compte Google). Auth reste Supabase (migrer casserait RLS/profiles/journal). Skills firebase/* installés dans .agents/skills.',
+    etapes: [
+      'firebase.json + .firebaserc (default legalflowio).',
+      'bun add firebase ; src/services/firebase.ts (init env + analytics + auth export).',
+      '.env + .env.example (VITE_FIREBASE_*).',
+      'npm run build → dist/ frais.',
+      'Test émulateur hosting:5000 : / et /login → 200 (rewrite SPA OK).',
+      'firebase login (compte propriétaire legalflowio) puis firebase deploy --only hosting.'
+    ],
+    criteres: [
+      'firebase.json valide (public dist + rewrite ** → /index.html).',
+      'Lint + build verts.',
+      'Émulateur sert / et /login en 200.',
+    ],
+    notes: 'Limites assumées : Hosting = statique uniquement, /api/* (chat IA, RAG serveur) nécessite Cloud Run plus tard — en attendant le chat bascule sur fallback local. Deploy réel bloqué : firebase login interactif requis (autre compte) → commandes à lancer côté utilisateur.',
+    historique: ['2026-09-06 : créé (Firebase Hosting, projet legalflowio).', '2026-09-06 : TERMINÉ sauf deploy (login requis).']
+  },
+  {
     id: 'PEN-021', state: 'done', priority: 'haute',
     title: 'Sécuriser /api/chat et /api/rag/search : JWT Supabase + Rate Limiting + validation Zod',
     created: '2026-09-05', updated: '2026-09-05',
