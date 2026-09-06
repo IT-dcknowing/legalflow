@@ -5,9 +5,8 @@
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const env = (import.meta as any)?.env || {};
-const SUPABASE_URL: string | undefined = env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY: string | undefined = env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL: string | undefined = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY: string | undefined = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase: SupabaseClient | null =
   SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
