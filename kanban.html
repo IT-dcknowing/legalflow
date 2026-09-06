@@ -1002,8 +1002,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'La matrice rôle × route est documentée dans le code (commentaire en tête de routeGuard.ts).',
       'Les URLs directes (refresh, partage de lien) sont gérées (le guard s\'exécute aussi au mount).'
     ],
-    notes: 'RLS reste la vraie sécurité ; le guard ne fait que router. Matrice 19/19 vérifiée par script.',
-    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.4 (garantie routing par rôle). Dépend de PEN-010 (cleanup mode démo) pour que useRealAuth soit la seule source de vérité.', '2026-09-05 : TERMINÉ (routeGuard.ts + enforcement App + log acces_refuse).']
+    notes: 'RLS reste la vraie sécurité ; le guard ne fait que router. Matrice prouvée par src/services/__tests__/routeGuard.test.ts (19 cas, suite verte).',
+    historique: ['2026-09-05 : créé depuis la spec "CONNEXION, INSCRIPTION & RÔLES" §3.4 (garantie routing par rôle). Dépend de PEN-010 (cleanup mode démo) pour que useRealAuth soit la seule source de vérité.', '2026-09-05 : TERMINÉ (routeGuard.ts + enforcement App + log acces_refuse).', '2026-09-06 : preuve versionnée (routeGuard.test.ts) suite revue conformité.']
   },
   {
     id: 'PEN-020', state: 'done', priority: 'moyenne',
@@ -1663,6 +1663,29 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Testé : router 12/12 en isolation, lint vert, build + deploy OK, routes live en 200. Clics navigateur à confirmer côté utilisateur.',
     historique: ['2026-09-06 : créé (retours QA page login/landing).', '2026-09-06 : TERMINÉ, déployé.']
+  },
+  {
+    id: 'PEN-039', state: 'pending', priority: 'haute',
+    title: '2FA TOTP obligatoire pour super_admin (console HQ)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['securite', '2fa', 'mfa', 'totp', 'supabase-auth', 'admin'],
+    depends_on: [],
+    objectif: 'Imposer une double authentification TOTP (application type Google Authenticator) à tout compte super_admin : sans 2e facteur valide, pas d’accès console HQ. Délai proposé : prochain lot, avant toute ouverture à des utilisateurs réels.',
+    contexte: 'Revue conformité : la console HQ voit les données fiscales de toutes les entreprises. Email+mot de passe seul = risque business. Supabase Auth supporte le MFA TOTP en natif (mfa.enroll / challenge / verify) — pas de service externe requis.',
+    etapes: [
+      'Login : après signInWithPassword super_admin, appeler mfa.getAuthenticatorAssuranceLevel ; si aal1 sans facteur vérifié → écran enroll (QR + code de confirmation).',
+      'Si facteur TOTP vérifié existe → écran challenge (6 chiffres) puis mfa.verify avant d’ouvrir la session applicative.',
+      'Stocker l’état “MFA vérifié” en session (ne pas se contenter du JWT).',
+      'Prévoir le rattrapage : super_admin perd son téléphone → réinitialisation par SQL direct opérateur (désenrôler le facteur), tracée au journal.',
+      'Tester : sans TOTP → console HQ inaccessible même avec bon mot de passe.'
+    ],
+    criteres: [
+      'Connexion super_admin sans TOTP valide = accès refusé.',
+      'Enroll QR + challenge + rattrapage opérateur documentés.',
+      'Les autres rôles ne sont pas impactés.',
+    ],
+    notes: 'Aucun PIN/code à 4 chiffres n’existe dans le code (vérifié par grep sur tout le repo le 2026-09-06) : si un “code 2539” a été vu, envoyer URL exacte + capture — ce n’est pas notre écran.',
+    historique: ['2026-09-06 : créé suite revue conformité (risque business console HQ).']
   }
 ];
 

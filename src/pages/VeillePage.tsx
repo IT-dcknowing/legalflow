@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { DemoBadge } from '../components/DemoBadge';
 import {
   ChevronDown,
   ChevronUp,
@@ -73,6 +74,7 @@ export const VeillePage: React.FC<VeillePageProps> = ({
             <h2 className="text-base font-black text-[#171A2E] m-0">
               Veille Réglementaire &amp; Textes Officiels
             </h2>
+            <DemoBadge />
           </div>
           <p className="text-xs text-[#6B6F85] m-0">
             Journal Officiel, Annexe Fiscale 2026, décrets d'application et circulaires DGI / CNPS analysés.

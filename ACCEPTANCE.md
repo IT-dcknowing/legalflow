@@ -19,11 +19,11 @@ Légende : ✅ prouvé · ⚠️ en place, validation visuelle navigateur à con
 - Reset : toujours « Si un compte existe pour cet email… » (même si inexistant).
 - ⚠️ Vérification visuelle navigateur à confirmer.
 
-## Critère 4 — Routing par statut ✅ (code + guard 19/19)
+## Critère 4 — Routing par statut ✅ (code + guard 19/19 versionné)
 - `routeAfterLogin(role, statut)` : actif → dashboard du rôle,
   en_attente → /en-attente, suspendu → /suspendu.
 - Garde anti-accès (actif vers pages blocantes) + matrice `routeGuard.ts`
-  vérifiée par script : 19/19.
+  prouvée par `src/services/__tests__/routeGuard.test.ts` (19 cas, suite verte).
 - ⚠️ Parcours cabinet en_attente de bout en bout à cliquer (localhost:3000).
 
 ## Critère 5 — Inscription entreprise = auto-actif ✅
@@ -55,3 +55,19 @@ Légende : ✅ prouvé · ⚠️ en place, validation visuelle navigateur à con
 ## Critère 10 — Gates Topbar fixes ✅ (code)
 - Badge fixe nom + rôle coloré par niveau (Topbar), plus de sélecteur.
 - ⚠️ Contrôle visuel des 3 rôles à confirmer dans le navigateur.
+
+## Suppression totale de compte — procédure opérateur (RGPD, droit à l'oubli)
+Contexte : l'endpoint applicatif anonymise (conversations supprimées, profil
+anonymisé) mais ne peut pas purger `auth.users` sans clé service. En attendant
+l'intégration SMTP/service_role, toute demande client suit cette procédure
+manuelle (opérateur HQ, dashboard Supabase) :
+1. Retrouver l'uid : `SELECT id FROM auth.users WHERE email = '<email client>'`.
+2. Dissocier le journal (garde la trace sans la personne) :
+   `UPDATE journal_evenements SET user_id = NULL WHERE user_id = '<uid>'`.
+3. Supprimer les conversations restantes :
+   `DELETE FROM chatbot_conversations WHERE user_id = '<uid>'`.
+4. Dashboard → Authentication → Users → supprimer l'utilisateur (cascade
+   `profiles` via ON DELETE CASCADE ; vérifier : `SELECT * FROM profiles
+   WHERE id = '<uid>'` doit rendre 0 ligne).
+5. Noter l'action dans le kanban + prévenir le client par écrit.
+Purge `auth.users` via API (service_role) = chantier Edge Function à planifier.

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { DemoBadge } from '../components/DemoBadge';
 import {
   Search,
   BookOpen,
@@ -180,6 +181,7 @@ export const BibliothequePage: React.FC<BibliothequePageProps> = ({
           <h2 className="text-sm sm:text-base font-black text-[#171A2E] uppercase tracking-wider m-0">
             Recommandé pour vous (Points d'attention de votre dossier)
           </h2>
+          <DemoBadge />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

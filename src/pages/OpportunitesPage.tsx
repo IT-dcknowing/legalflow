@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { DemoBadge } from '../components/DemoBadge';
 import {
   Sparkles,
   ShieldAlert,
@@ -79,6 +80,7 @@ export const OpportunitesPage: React.FC<OpportunitesPageProps> = ({
               <h2 className="text-base sm:text-lg font-black text-[#171A2E] m-0">
                 Optimisation Fiscale &amp; Sociale Légale
               </h2>
+              <DemoBadge />
               <span className="text-[11px] font-bold text-[#1F9254] bg-[#E7F6EE] px-2 py-0.5 rounded-full">
                 {ratioCaptePct}% d'optimisation
               </span>
