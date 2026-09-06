@@ -73,7 +73,15 @@ import { ArrowLeft } from 'lucide-react';
 import { AccueilPage } from './pages/AccueilPage';
 import { LandingPage } from './pages/LandingPage';
 import { InscriptionPage } from './pages/InscriptionPage';
-import { completePendingInscription, provisionOAuthProfile } from './services/inscriptionService';
+import { completePendingInscription, provisionFirebaseAccount } from './services/inscriptionService';
+import {
+  firebaseSignIn,
+  firebaseGoogle,
+  firebasePasswordReset,
+  firebaseSignOut,
+  watchFirebaseAuth,
+  bridgeToSupabase,
+} from './services/firebaseBridge';
 import { EnAttentePage } from './pages/EnAttentePage';
 import { SuspenduPage } from './pages/SuspenduPage';
 import { JournalPage } from './pages/JournalPage';
@@ -280,8 +288,8 @@ export function App() {
       if (completed) profile = await fetchMyProfile(userId);
     }
     if (!profile) {
-      // OAuth (Google) : auto-provisionnement entreprise/actif à la 1re connexion.
-      const provisioned = await provisionOAuthProfile(userId, email);
+      // Firebase : auto-provisionnement entreprise/actif à la 1re connexion.
+      const provisioned = await provisionFirebaseAccount(userId, email);
       if (provisioned) profile = await fetchMyProfile(userId);
     }
     setAuthUserId(userId);
@@ -352,51 +360,43 @@ export function App() {
         setActivePage('landing');
       }
     });
+    // Firebase persiste sa propre session : au rechargement, si Supabase n'a
+    // plus de session mais Firebase oui → re-pont silencieux.
+    const unwatch = watchFirebaseAuth(async (fbUser) => {
+      if (cancelled || !fbUser) return;
+      if (!supabase) return;
+      const { data } = await supabase.auth.getSession();
+      if (cancelled || data.session?.user) return;
+      try {
+        const idToken = await fbUser.getIdToken();
+        await bridgeToSupabase(idToken);
+      } catch {
+        /* l'utilisateur se reconnectera via login */
+      }
+    });
     return () => {
       cancelled = true;
       sub.subscription.unsubscribe();
+      unwatch();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // PEN-015 : erreur NEUTRE (pas d'énumération : on ne distingue pas
-  // email inexistant vs mot de passe faux).
-  const NEUTRAL_AUTH_ERROR =
-    'Identifiants incorrects. Vérifiez votre saisie ou réinitialisez votre mot de passe.';
-
+  // Auth Firebase (email/mdp + Google) → pont session Supabase.
   const handleLogin = async (email: string, password: string): Promise<string | null> => {
-    if (!supabase) return 'Backend non configuré.';
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      return NEUTRAL_AUTH_ERROR;
-    }
-    return null;
+    return firebaseSignIn(email, password);
   };
 
   const handleResetPassword = async (email: string): Promise<void> => {
-    if (!supabase) return;
-    try {
-      await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo:
-          typeof window !== 'undefined' ? window.location.origin + '/login' : undefined,
-      });
-    } catch {
-      /* neutre dans tous les cas : on ne révèle rien */
-    }
+    await firebasePasswordReset(email);
   };
 
-  // OAuth Google : redirection navigateur, retour géré par onAuthStateChange.
+  // OAuth Google via Firebase (pas de redirection Supabase).
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const handleGoogleSignIn = async () => {
-    if (!supabase) return;
     setAuthNotice(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-      },
-    });
-    if (error) setAuthNotice('Connexion Google impossible. Réessayez.');
+    const err = await firebaseGoogle();
+    if (err) setAuthNotice(err);
   };
 
   // Après inscription avec session immédiate : recharge le profil fraîchement créé.
@@ -420,7 +420,7 @@ export function App() {
     setChatInitial(null);
     sessionLoadedFor.current = null;
     await logDeconnexion();
-    if (supabase) await supabase.auth.signOut();
+    await firebaseSignOut();
     setAuthUserId(null);
     setDbProfile(null);
     setProfileChecked(false);

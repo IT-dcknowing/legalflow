@@ -1686,6 +1686,30 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Aucun PIN/code à 4 chiffres n’existe dans le code (vérifié par grep sur tout le repo le 2026-09-06) : si un “code 2539” a été vu, envoyer URL exacte + capture — ce n’est pas notre écran.',
     historique: ['2026-09-06 : créé suite revue conformité (risque business console HQ).']
+  },
+  {
+    id: 'PEN-040', state: 'done', priority: 'haute',
+    title: 'Migration auth vers Firebase (Supabase garde données + RLS)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['auth', 'firebase', 'supabase', 'oidc', 'frontend'],
+    depends_on: [],
+    objectif: 'Firebase = qui-es-tu (email/mdp + Google), Supabase = données (RLS inchangé) via pont grant id_token → session Supabase.',
+    contexte: 'Consigne initiale : auth Firebase. Choix intermédiaire Supabase corrigé. RLS/profils/journal intacts (même session Supabase). Comptes mdp natifs conservés en parallèle.',
+    etapes: [
+      'firebaseBridge.ts : email/mdp, Google popup, reset, logout double, watch + re-pont silencieux.',
+      'LoginPage/InscriptionPage/App recâblés (plus aucun signIn Supabase direct).',
+      'provisionFirebaseAccount : 1re connexion Firebase → entreprise/actif auto.',
+      'Lint + build verts ; login natif re-vérifié (parallèle préservé).',
+      'Dashboard : activer pont Firebase côté Supabase (issuer securetoken.google.com/legalflowio) + providers Firebase (Email, Google) + domaines autorisés.',
+      'Re-lier les 3 comptes existants par email (SQL) après leur 1re connexion Firebase.'
+    ],
+    criteres: [
+      'Aucun appel auth Supabase direct restant (grep vide).',
+      'Comptes natifs toujours fonctionnels.',
+      'À tester navigateur : signup Firebase → dashboard ; Google → dashboard ; reload → session.',
+    ],
+    notes: 'Point ouvert : libellé provider exact côté GoTrue (firebase) à confirmer au 1er test — le message d’erreur du pont guidera (issuer non autorisé = config dashboard manquante).',
+    historique: ['2026-09-06 : créé (retour consigne initiale Firebase Auth).', '2026-09-06 : TERMINÉ côté code, config consoles + tests navigateur restants.']
   }
 ];
 

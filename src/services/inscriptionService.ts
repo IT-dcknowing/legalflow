@@ -1,11 +1,12 @@
 /**
- * PEN-016 — Inscription publique (entreprise / cabinet).
- * Ordre imposé par RLS : signUp → INSERT profiles → INSERT entité →
- * UPDATE profiles (premier lien, trigger OK car ancienne valeur NULL).
- * Si pas de session immédiate (email à confirmer), la charge utile est mise
- * de côté (SANS mot de passe) et finalisée à la première connexion.
+ * Inscription publique (entreprise / cabinet) via Firebase Auth.
+ * Firebase connecte immédiatement (sans confirmation email) puis le pont
+ * crée la session Supabase : userId retourné = id Supabase (RLS).
+ * Ordre : signup Firebase → pont → INSERT profiles → INSERT entité → lien.
  */
 import { supabase } from './supabaseClient';
+import { firebaseSignUp } from './firebaseBridge';
+import { firebaseAuth } from './firebase';
 import {
   logInscriptionEntreprise,
   logInscriptionCabinet,
@@ -34,25 +35,19 @@ const PENDING_KEY = 'lf_pending_inscription';
 export async function signupAccount(
   email: string,
   password: string,
-  fullName: string
+  _fullName: string
 ): Promise<{ userId: string | null; hasSession: boolean; error?: string }> {
-  if (!supabase) return { userId: null, hasSession: false, error: 'Backend non configuré.' };
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { full_name: fullName } },
-  });
-  if (error) {
-    const msg = error.message || '';
-    if (/already|existe|pris|registered/i.test(msg)) {
-      return { userId: null, hasSession: false, error: 'Cet email est déjà utilisé.' };
-    }
-    if (/rate|429|limit/i.test(msg)) {
-      return { userId: null, hasSession: false, error: 'Service momentanément indisponible, réessayez dans une heure.' };
-    }
-    return { userId: null, hasSession: false, error: 'Inscription impossible. Réessayez.' };
+  const fb = await firebaseSignUp(email, password);
+  if (fb.error || !fb.userId) {
+    return { userId: null, hasSession: false, error: fb.error || 'Inscription impossible. Réessayez.' };
   }
-  return { userId: data.user?.id || null, hasSession: !!data.session };
+  if (!supabase) return { userId: null, hasSession: false, error: 'Backend non configuré.' };
+  const { data } = await supabase.auth.getSession();
+  const sbId = data.session?.user?.id || null;
+  if (!sbId) {
+    return { userId: null, hasSession: false, error: 'Session impossible. Réessayez.' };
+  }
+  return { userId: sbId, hasSession: true };
 }
 
 export async function createEntrepriseProfile(
@@ -160,19 +155,18 @@ export async function completePendingInscription(userId: string): Promise<boolea
 }
 
 /**
- * OAuth (Google) : auto-provisionnement à la 1re connexion (entreprise/actif).
- * Uniquement si le provider est OAuth (jamais pour email/password sans profil,
- * qui reste sur l'écran « Compte sans profil »).
+ * Firebase : auto-provisionnement à la 1re connexion (entreprise/actif).
+ * Uniquement si une session Firebase existe (jamais pour un compte
+ * mot-de-passe Supabase sans profil, qui reste sur « Compte sans profil »).
  */
-export async function provisionOAuthProfile(userId: string, email: string): Promise<boolean> {
+export async function provisionFirebaseAccount(userId: string, email: string): Promise<boolean> {
   if (!supabase) return false;
   try {
-    const { data } = await supabase.auth.getUser();
-    const provider = (data?.user?.app_metadata as any)?.provider;
-    if (provider !== 'google') return false;
+    const fbUser = firebaseAuth?.currentUser;
+    if (!fbUser) return false;
     const fullName =
-      ((data?.user?.user_metadata as any)?.full_name as string) ||
-      ((data?.user?.user_metadata as any)?.name as string) ||
+      (fbUser.displayName as string) ||
+      ((fbUser as any)?.providerData?.[0]?.displayName as string) ||
       '';
     const raison = fullName.trim() || email.split('@')[0];
     const res = await createEntrepriseProfile(userId, { raisonSociale: raison, email });
