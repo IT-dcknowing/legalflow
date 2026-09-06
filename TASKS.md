@@ -16,10 +16,47 @@ Pour avancer une tâche : cocher la case et déplacer la ligne dans la bonne sec
 
 - [ ] **LF-01** — Brancher le frontend sur l'API Laravel.
   Seule tâche ouverte : le front tourne sur données locales (+ Supabase pour le RAG uniquement).
+- [ ] **LF-16** — Corriger BUG-V1-07 (P0) : `<main>` vide quand `activePage === 'landing'` et
+  utilisateur connecté. Voir `QA-REPORT-V1-2026-09-06.md` §7.1. Fichier `src/App.tsx`.
+  Fix A (minimal) : ajouter `{activePage === 'landing' && <AccueilPage onNavigate={handleNavigate} />}`
+  dans le bloc `<main>` post-connexion. Vérifier : naviguer depuis login → page d'accueil
+  affiche bien le hero "Bienvenue sur Legal Flow" + 11 pages sidebar.
+  Effort : Faible.
 
 ## Pas commencé
 
-*(rien pour l'instant)*
+- [ ] **LF-17** — Corriger BUG-V1-08 (P2 UX) : `pageTitles.landing` et `pageTitles.accueil`
+  affichent tous deux "Accueil" dans la Topbar (`src/App.tsx:516,521`). Distinguer les deux
+  (ex: landing → "Bienvenue", accueil → "Tableau de bord" — ou aligner sur
+  `routeAfterLogin(role, statut)`). Effort : Trivial.
+
+- [ ] **LF-18** — Migrer l'index pgvector IVFFlat → HNSW dans `src/data/supabaseSchema.sql:251`.
+  Constat QA : IVFFlat toujours actif alors que AUDIT_REPORT2 (P0) demandait HNSW pour
+  éviter les centroïdes erronés sur petite table. Rebuild index après seed.
+  Effort : Modéré. Bloque la précision RAG si volumétrie seed faible.
+
+- [ ] **LF-19** — Ajouter l'index `idx_documents_entreprise ON public.documents(entreprise_id)`
+  dans `src/data/supabaseSchema.sql` (BDD-001 AUDIT_REPORT). Améliore perfs RLS jointures.
+  Effort : Minimal.
+
+- [ ] **LF-20** — Code-split le bundle principal `dist/assets/index-*.js` (1042 kB minifié,
+  290 kB gzip) via `React.lazy()` sur les pages lourdes (LandingPage, AssistantPanel,
+  SimulatorModal). Cf. AUDIT_REPORT2 P1.3. Effort : Modéré.
+
+- [ ] **LF-21** — Étendre Vitest au serveur Express (`server.ts`, middlewares,
+  `legalRagEngine.ts`) avec supertest + mock Supabase. Cible : couverture lignes > 80 %
+  sur tout `server/`. Effort : Modéré.
+
+- [ ] **LF-22** — Résoudre le double-import `supabaseClient.ts` (dynamique dans
+  `AssistantPanel.tsx` + statique dans 5 autres fichiers, cf. Vite warning W1).
+  Fix : aligner tous les imports sur le statique, ou garder uniquement le dynamique.
+  Effort : Faible.
+
+- [ ] **LF-23** — Vague QA V2 : Playwright E2E sur les 3 critères ⚠️ restants dans
+  ACCEPTANCE.md (Critère 3 énumération bloquée visuelle, Critère 4 parcours cabinet
+  en_attente, Critère 10 Topbar 3 rôles) + reverification des 7 anomalies AUDIT_REPORT
+  non couvertes (LOG-002/003/004, COD-002/003/005, UI-002/003).
+  Effort : Modéré (1/2 journée QA).
 
 ## Done
 

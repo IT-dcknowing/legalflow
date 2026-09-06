@@ -1059,8 +1059,8 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'Lint + build verts.',
       'Émulateur sert / et /login en 200.',
     ],
-    notes: 'Limites assumées : Hosting = statique uniquement, /api/* (chat IA, RAG serveur) nécessite Cloud Run plus tard — en attendant le chat bascule sur fallback local. Deploy réel bloqué : firebase login interactif requis (autre compte) → commandes à lancer côté utilisateur.',
-    historique: ['2026-09-06 : créé (Firebase Hosting, projet legalflowio).', '2026-09-06 : TERMINÉ sauf deploy (login requis).']
+    notes: 'Limites assumées : Hosting = statique uniquement, /api/* (chat IA, RAG serveur) nécessite Cloud Run plus tard — en attendant le chat bascule sur fallback local. DÉPLOYÉ le 2026-09-06 sur https://legalflowio.web.app (vérifié / et /login en 200).',
+    historique: ['2026-09-06 : créé (Firebase Hosting, projet legalflowio).', '2026-09-06 : TERMINÉ sauf deploy (login requis).', '2026-09-06 : DÉPLOYÉ en production (firebase deploy --only hosting).']
   },
   {
     id: 'PEN-021', state: 'done', priority: 'haute',
