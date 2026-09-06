@@ -158,3 +158,26 @@ export async function completePendingInscription(userId: string): Promise<boolea
   if (res.ok) clearPendingInscription();
   return res.ok;
 }
+
+/**
+ * OAuth (Google) : auto-provisionnement à la 1re connexion (entreprise/actif).
+ * Uniquement si le provider est OAuth (jamais pour email/password sans profil,
+ * qui reste sur l'écran « Compte sans profil »).
+ */
+export async function provisionOAuthProfile(userId: string, email: string): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { data } = await supabase.auth.getUser();
+    const provider = (data?.user?.app_metadata as any)?.provider;
+    if (provider !== 'google') return false;
+    const fullName =
+      ((data?.user?.user_metadata as any)?.full_name as string) ||
+      ((data?.user?.user_metadata as any)?.name as string) ||
+      '';
+    const raison = fullName.trim() || email.split('@')[0];
+    const res = await createEntrepriseProfile(userId, { raisonSociale: raison, email });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

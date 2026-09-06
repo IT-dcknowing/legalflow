@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Building2, Briefcase, ArrowLeft } from 'lucide-react';
 import type { PageId } from '../types';
 import { LegalFlowLogo } from '../components/LegalFlowLogo';
+import { GoogleIcon } from '../components/GoogleIcon';
 import {
   signupAccount,
   createEntrepriseProfile,
@@ -12,6 +13,7 @@ import {
 interface InscriptionPageProps {
   onNavigate: (page: PageId) => void;
   onComplete: () => void;
+  onGoogleSignIn: () => void;
 }
 
 type SignupType = 'entreprise' | 'cabinet';
@@ -24,7 +26,7 @@ function validEmail(v: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
 }
 
-export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, onComplete }) => {
+export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, onComplete, onGoogleSignIn }) => {
   const [kind, setKind] = useState<SignupType>('entreprise');
   const [raisonSociale, setRaisonSociale] = useState('');
   const [nomGestionnaire, setNomGestionnaire] = useState('');
@@ -276,6 +278,21 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
               {loading ? 'Création…' : 'Créer mon compte'}
             </button>
           </form>
+
+          <div className="flex items-center gap-3 mt-4">
+            <span className="flex-1 h-px bg-[#E5E5F0]" />
+            <span className="text-[11px] font-bold text-[#8C90A4]">ou</span>
+            <span className="flex-1 h-px bg-[#E5E5F0]" />
+          </div>
+          <button
+            id="btnGoogleSignup"
+            type="button"
+            onClick={onGoogleSignIn}
+            className="w-full bg-white hover:bg-[#F6F6FB] text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <GoogleIcon />
+            <span>S’inscrire avec Google</span>
+          </button>
 
           <button
             onClick={() => onNavigate('login')}

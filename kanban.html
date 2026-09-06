@@ -1383,6 +1383,29 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Fait : prom-client + middleware latence/compteurs + GET /metrics vérifié (séries réelles http_requests_total/duration) + ops/grafana-dashboard.json validé + 3 alertes documentées. Écart : test de charge autocannon non exécuté.',
     historique: ['2026-09-05 : créé depuis AUDIT_REPORT2.md (sections 2 et P2).', '2026-09-05 : TERMINÉ.']
+  },
+  {
+    id: 'PEN-035', state: 'done', priority: 'haute',
+    title: 'Connexion et inscription avec Google (OAuth Supabase)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['auth', 'oauth', 'google', 'supabase', 'frontend'],
+    depends_on: [],
+    objectif: 'Boutons « Continuer avec Google » (login) et « S’inscrire avec Google » (inscription) via signInWithOAuth, avec auto-provisionnement entreprise/actif à la 1re connexion.',
+    contexte: 'Google activé côté Supabase par l’utilisateur. Reste à prévoir côté dashboard : Redirect URLs (localhost:3000 + prod).',
+    etapes: [
+      'Bouton Google (logo G inline) sur LoginPage + InscriptionPage.',
+      'signInWithOAuth provider google, redirectTo origin ; retour géré par onAuthStateChange.',
+      'provisionOAuthProfile : si pas de profil ET provider google → crée entreprise + profil entreprise/actif + log.',
+      'Vérifier : lint + build OK ; inserts RLS déjà prouvés (mêmes fonctions que PEN-016).',
+      'Dashboard Supabase : vérifier Redirect URLs + Site URL (action utilisateur).'
+    ],
+    criteres: [
+      'Clic Google → consentement → retour app avec session.',
+      '1re connexion Google → entreprise + profil créés, dashboard affiché.',
+      'Reconnexion Google → session restaurée, rien dupliqué.',
+    ],
+    notes: 'Google = compte entreprise/actif uniquement (pas de cabinet via Google en V1). Test navigateur à faire côté utilisateur (OAuth non automatisable d’ici).',
+    historique: ['2026-09-06 : créé à la demande (Google activé sur Supabase).', '2026-09-06 : TERMINÉ côté code, à tester dans le navigateur.']
   }
 ];
 

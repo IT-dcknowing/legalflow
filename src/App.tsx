@@ -34,6 +34,7 @@ import {
   type DbEntreprise,
 } from './services/supabaseClient';
 import { LoginPage } from './components/LoginPage';
+import { canAccess } from './services/routeGuard';
 import { Loader } from './components/Loader';
 import { entityToProfile, dbEntrepriseToEntity } from './utils/transformers';
 import { logConnexion, logDeconnexion } from './services/journalEvents';
@@ -71,8 +72,7 @@ import { ArrowLeft } from 'lucide-react';
 import { AccueilPage } from './pages/AccueilPage';
 import { LandingPage } from './pages/LandingPage';
 import { InscriptionPage } from './pages/InscriptionPage';
-import { canAccess } from './services/routeGuard';
-import { completePendingInscription } from './services/inscriptionService';
+import { completePendingInscription, provisionOAuthProfile } from './services/inscriptionService';
 import { EnAttentePage } from './pages/EnAttentePage';
 import { SuspenduPage } from './pages/SuspenduPage';
 import { JournalPage } from './pages/JournalPage';
@@ -271,6 +271,11 @@ export function App() {
       const completed = await completePendingInscription(userId);
       if (completed) profile = await fetchMyProfile(userId);
     }
+    if (!profile) {
+      // OAuth (Google) : auto-provisionnement entreprise/actif à la 1re connexion.
+      const provisioned = await provisionOAuthProfile(userId, email);
+      if (provisioned) profile = await fetchMyProfile(userId);
+    }
     setAuthUserId(userId);
     setProfileChecked(true);
     setDbProfile(profile);
@@ -370,6 +375,20 @@ export function App() {
     } catch {
       /* neutre dans tous les cas : on ne révèle rien */
     }
+  };
+
+  // OAuth Google : redirection navigateur, retour géré par onAuthStateChange.
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const handleGoogleSignIn = async () => {
+    if (!supabase) return;
+    setAuthNotice(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    });
+    if (error) setAuthNotice('Connexion Google impossible. Réessayez.');
   };
 
   // Après inscription avec session immédiate : recharge le profil fraîchement créé.
@@ -744,10 +763,10 @@ export function App() {
       return <LandingPage onNavigate={handleNavigate} />;
     }
     if (activePage === 'inscription') {
-      return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} />;
+      return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} onGoogleSignIn={handleGoogleSignIn} />;
     }
     if (activePage === 'login') {
-      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} signupHint />;
+      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} onGoogleSignIn={handleGoogleSignIn} notice={authNotice} signupHint />;
     }
     return <LandingPage onNavigate={handleNavigate} />;
   }

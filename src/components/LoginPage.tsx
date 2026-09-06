@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { Lock, Mail, LogIn } from 'lucide-react';
 import { LegalFlowLogo } from './LegalFlowLogo';
+import { GoogleIcon } from './GoogleIcon';
 
 interface LoginPageProps {
   onLogin: (email: string, password: string) => Promise<string | null>;
   onResetPassword: (email: string) => Promise<void>;
+  onGoogleSignIn: () => void;
+  notice?: string | null;
   signupHint?: boolean;
 }
 
@@ -13,7 +16,13 @@ interface LoginPageProps {
  * Pas d'inscription publique : les comptes sont créés par invitation
  * (Niv. 1 → Niv. 2 → Niv. 3). Le rôle est lu en base après login.
  */
-export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, signupHint }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onLogin,
+  onResetPassword,
+  onGoogleSignIn,
+  notice,
+  signupHint,
+}) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,6 +83,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, 
               ? 'Saisissez votre email pour recevoir un lien de réinitialisation.'
               : 'Accédez à votre espace selon votre niveau (Console HQ, Portefeuille ou Entreprise).'}
           </p>
+
+          {notice && !resetMode && (
+            <div className="text-xs font-bold text-[#3D3680] bg-[#EDEBF9] border border-[#C7C4E8] rounded-xl px-3 py-2.5 mb-3.5">
+              {notice}
+            </div>
+          )}
 
           {resetMode ? (
             <form onSubmit={handleReset} className="space-y-3.5">
@@ -209,6 +224,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onResetPassword, 
               Mot de passe oublié ?
             </button>
           </form>
+          )}
+
+          {!resetMode && (
+            <>
+              <div className="flex items-center gap-3 my-1">
+                <span className="flex-1 h-px bg-[#E5E5F0]" />
+                <span className="text-[11px] font-bold text-[#8C90A4]">ou</span>
+                <span className="flex-1 h-px bg-[#E5E5F0]" />
+              </div>
+              <button
+                id="btnGoogleSignIn"
+                type="button"
+                onClick={onGoogleSignIn}
+                className="w-full bg-white hover:bg-[#F6F6FB] text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <GoogleIcon />
+                <span>Continuer avec Google</span>
+              </button>
+            </>
           )}
 
           <p className="text-[11px] text-[#8C90A4] mt-4 mb-0 text-center">
