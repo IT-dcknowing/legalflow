@@ -25,20 +25,15 @@ import {
 import { mockUsers, initialCompaniesEntities, checkIsProfileComplete } from './data/rolesData';
 import {
   supabase,
-  isSupabaseConfigured,
-  fetchMyProfile,
-  fetchVisibleEntreprises,
   logEvent,
   sanitizeFileName,
   type DbProfile,
-  type DbEntreprise,
 } from './services/supabaseClient';
 import { LoginPage } from './components/LoginPage';
 import { canAccess } from './services/routeGuard';
 import { pageToPath, pathToPage } from './services/router';
 import { Loader } from './components/Loader';
-import { entityToProfile, dbEntrepriseToEntity } from './utils/transformers';
-import { logConnexion, logDeconnexion } from './services/journalEvents';
+import { entityToProfile } from './utils/transformers';
 import { ObligationEngine } from './services/obligationEngine';
 import {
   diffDays,
@@ -73,15 +68,6 @@ import { ArrowLeft } from 'lucide-react';
 import { AccueilPage } from './pages/AccueilPage';
 import { LandingPage } from './pages/LandingPage';
 import { InscriptionPage } from './pages/InscriptionPage';
-import { completePendingInscription, provisionFirebaseAccount } from './services/inscriptionService';
-import {
-  firebaseSignIn,
-  firebaseGoogle,
-  firebasePasswordReset,
-  firebaseSignOut,
-  watchFirebaseAuth,
-  bridgeToSupabase,
-} from './services/firebaseBridge';
 import { EnAttentePage } from './pages/EnAttentePage';
 import { SuspenduPage } from './pages/SuspenduPage';
 import { JournalPage } from './pages/JournalPage';
@@ -186,13 +172,18 @@ export function App() {
   const [isLaravelViewerOpen, setIsLaravelViewerOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(3);
 
-  // ---- Auth réelle Supabase (PEN-010 : plus de mode démo) ----
-  const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const [dbProfile, setDbProfile] = useState<DbProfile | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [profileChecked, setProfileChecked] = useState(false);
-  const sessionLoadedFor = React.useRef<string | null>(null);
-  const useRealAuth = isSupabaseConfigured();
+  // ---- AUTH MISE EN PAUSE (décision produit 2026-09-06) ----
+  // Pas de session, pas de tokens, pas d'OAuth. Login/Signup redirigent
+  // directement vers l'app ; le sélecteur de profils démo pilote les niveaux.
+  // Base de données et tout le reste inchangés.
+  // Réactivation : passer AUTH_BYPASSED à false ET restaurer le bloc session
+  // (getSession/onAuthStateChange/enterRealSession) depuis l'historique git.
+  const AUTH_BYPASSED = true;
+  const [authUserId] = useState<string | null>(null);
+  const [dbProfile] = useState<DbProfile | null>(null);
+  const [authReady] = useState(true);
+  const [profileChecked] = useState(false);
+  const useRealAuth = false;
 
   const uuidOrUndef = (v?: string | null): string | undefined =>
     v && /^[0-9a-f-]{36}$/i.test(v) ? v : undefined;
@@ -277,156 +268,32 @@ export function App() {
       ? Math.round(((obligations.length - groupesGlobaux.totalLate) / obligations.length) * 100)
       : 100;
 
-  // ---- Session réelle : profil, routage par niveau + statut, données scopées RLS ----
-  const enterRealSession = async (userId: string, email: string) => {
-    if (sessionLoadedFor.current === userId) return;
-    sessionLoadedFor.current = userId;
-    let profile = await fetchMyProfile(userId);
-    if (!profile) {
-      // Inscription finalisée en différé (compte confirmé après coup).
-      const completed = await completePendingInscription(userId);
-      if (completed) profile = await fetchMyProfile(userId);
-    }
-    if (!profile) {
-      // Firebase : auto-provisionnement entreprise/actif à la 1re connexion.
-      const provisioned = await provisionFirebaseAccount(userId, email);
-      if (provisioned) profile = await fetchMyProfile(userId);
-    }
-    setAuthUserId(userId);
-    setProfileChecked(true);
-    setDbProfile(profile);
-    if (!profile) return;
-    const realUser: AppUser = {
-      id: userId,
-      email: profile.email || email,
-      fullName: profile.nom_complet || email,
-      role: profile.role === 'super_admin' ? 'super_admin' : profile.role === 'gestionnaire' ? 'gestionnaire' : 'utilisateur',
-    };
-    setCurrentUser(realUser);
-    // PEN-015 : routage conditionnel rôle × statut (actif → dashboard, sinon page blocante).
-    const home = routeAfterLogin(profile.role, profile.statut || 'actif');
-    if (profile.role === 'super_admin') {
-      setCurrentRole('super_admin');
-    } else if (profile.role === 'gestionnaire') {
-      setCurrentRole('gestionnaire');
-      setIsGestionnaireInCompanyMode(false);
-    } else {
-      setCurrentRole('utilisateur');
-      setIsGestionnaireInCompanyMode(false);
-    }
-    setActivePage(home);
-    await logConnexion(profile.email || email);
-    if (home === 'en_attente' || home === 'suspendu') return; // compte non actif : pas de données
-    // Données scopées : RLS ne renvoie que le périmètre du niveau.
-    const rows = await fetchVisibleEntreprises();
-    if (rows.length > 0) {
-      const entities = rows.map(dbEntrepriseToEntity);
-      setCompanies(entities);
-      const target =
-        profile.role === 'entreprise'
-          ? entities.find((e) => e.id === profile.entreprise_id) || entities[0]
-          : entities[0];
-      setActiveCompanyId(target.id);
-      setProfile(entityToProfile(target));
-    }
-    await loadChatHistory(userId);
+  // ---- Session réelle : SUPPRIMÉ (auth en pause, voir AUTH_BYPASSED) ----
+
+  // ---- Historique chatbot : désactivé sans session (réactivé avec l'auth) ----
+
+  // ---- Bypass auth : clic = entrée directe, aucune vérification ----
+  const handleLogin = async (): Promise<null> => {
+    setActivePage(getDefaultPageForRole(currentRole));
+    return null;
   };
 
-  React.useEffect(() => {
-    if (!isSupabaseConfigured()) {
-      setAuthReady(true);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase!.auth.getSession();
-      if (cancelled) return;
-      if (data.session?.user) {
-        await enterRealSession(data.session.user.id, data.session.user.email || '');
-      }
-      setAuthReady(true);
-    })();
-    const { data: sub } = supabase!.auth.onAuthStateChange(async (event, session) => {
-      if (cancelled) return;
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
-        await enterRealSession(session.user.id, session.user.email || '');
-      } else if (event === 'SIGNED_OUT') {
-        sessionLoadedFor.current = null;
-        setAuthUserId(null);
-        setDbProfile(null);
-        setProfileChecked(false);
-        chatConvId.current = null;
-        setChatInitial(null);
-        setActivePage('landing');
-      }
-    });
-    // Firebase persiste sa propre session : au rechargement, si Supabase n'a
-    // plus de session mais Firebase oui → re-pont silencieux.
-    const unwatch = watchFirebaseAuth(async (fbUser) => {
-      if (cancelled || !fbUser) return;
-      if (!supabase) return;
-      const { data } = await supabase.auth.getSession();
-      if (cancelled || data.session?.user) return;
-      try {
-        const idToken = await fbUser.getIdToken();
-        await bridgeToSupabase(idToken);
-      } catch {
-        /* l'utilisateur se reconnectera via login */
-      }
-    });
-    return () => {
-      cancelled = true;
-      sub.subscription.unsubscribe();
-      unwatch();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleResetPassword = async (): Promise<void> => {};
 
-  // Auth Firebase (email/mdp + Google) → pont session Supabase.
-  const handleLogin = async (email: string, password: string): Promise<string | null> => {
-    return firebaseSignIn(email, password);
-  };
-
-  const handleResetPassword = async (email: string): Promise<void> => {
-    await firebasePasswordReset(email);
-  };
-
-  // OAuth Google via Firebase (pas de redirection Supabase).
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const handleGoogleSignIn = async () => {
-    setAuthNotice(null);
-    const err = await firebaseGoogle();
-    if (err) setAuthNotice(err);
+    setActivePage(getDefaultPageForRole(currentRole));
   };
 
-  // Après inscription avec session immédiate : recharge le profil fraîchement créé.
+  // Après inscription (visuelle uniquement) : entrée directe.
   const handleInscriptionComplete = async () => {
-    sessionLoadedFor.current = null;
-    if (!supabase) {
-      setActivePage('login');
-      return;
-    }
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.user) {
-      await enterRealSession(data.session.user.id, data.session.user.email || '');
-    } else {
-      setActivePage('login');
-    }
+    setActivePage(getDefaultPageForRole(currentRole));
   };
 
   const handleLogout = async () => {
-    if (chatSaveTimer.current) clearTimeout(chatSaveTimer.current);
-    chatConvId.current = null;
-    setChatInitial(null);
-    sessionLoadedFor.current = null;
-    await logDeconnexion();
-    await firebaseSignOut();
-    setAuthUserId(null);
-    setDbProfile(null);
-    setProfileChecked(false);
+    setActivePage('landing');
   };
 
-  // ---- RGPD : export + suppression de compte (PEN-033) ----
+  // ---- RGPD : export + suppression de compte (inopérants sans session) ----
   const getAccessToken = async (): Promise<string | null> => {
     if (!supabase) return null;
     const { data } = await supabase.auth.getSession();
@@ -461,62 +328,36 @@ export function App() {
     await handleLogout();
   };
 
-  // ---- Historique chatbot persisté (chatbot_conversations) ----
-  const chatConvId = React.useRef<string | null>(null);
-  const chatSaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [chatInitial, setChatInitial] = useState<ChatMessage[] | null>(null);
+  // ---- Sélecteur de profils démo (Topbar) ----
+  // Bascule l'état AFFICHÉ (rôle + entreprise + dashboard) sans authentification.
+  // Profils issus de mockUsers (rolesData.ts) : super_admin, gestionnaire,
+  // utilisateur_complet (Koffi BTP), utilisateur_incomplet (Atelier N'Guessan).
+  const handleSelectProfile = (userKey: string) => {
+    const selectedUser = mockUsers[userKey] || mockUsers.utilisateur_complet;
+    setCurrentUser(selectedUser);
+    setIsGestionnaireInCompanyMode(false);
+    setCompanyPendingEnter(null);
+    const role = selectedUser.role;
 
-  const loadChatHistory = async (userId: string) => {
-    chatConvId.current = null;
-    setChatInitial(null);
-    if (!supabase) return;
-    const { data } = await supabase
-      .from('chatbot_conversations')
-      .select('id, messages')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const stored = (data as any)?.messages;
-    if (data && Array.isArray(stored) && stored.length > 0) {
-      chatConvId.current = (data as any).id;
-      setChatInitial(
-        stored.map((m: any, i: number) => ({
-          id: `hist-${i}`,
-          sender: m.role === 'user' ? 'user' : 'bot',
-          text: m.contenu || '',
-          timestamp: typeof m.ts === 'string' ? m.ts.slice(11, 16) : '',
-        }))
-      );
+    if (role === 'super_admin') {
+      setCurrentRole('super_admin');
+      setActivePage('super_admin');
+    } else if (role === 'gestionnaire') {
+      setCurrentRole('gestionnaire');
+      setActivePage('gestionnaire_dashboard');
+    } else if (userKey === 'utilisateur_incomplet') {
+      const incomplet = companies.find((c) => c.id === 'ent-nguessan') || companies[0];
+      setActiveCompanyId(incomplet.id);
+      setProfile(entityToProfile(incomplet));
+      setCurrentRole('utilisateur');
+      setActivePage('dashboard');
+    } else {
+      const complet = companies.find((c) => c.id === 'ent-koffi') || companies[0];
+      setActiveCompanyId(complet.id);
+      setProfile(entityToProfile(complet));
+      setCurrentRole('utilisateur');
+      setActivePage('dashboard');
     }
-  };
-
-  const handleChatMessagesChange = (msgs: ChatMessage[]) => {
-    if (!supabase || !authUserId) return;
-    if (chatSaveTimer.current) clearTimeout(chatSaveTimer.current);
-    const uid = authUserId;
-    chatSaveTimer.current = setTimeout(async () => {
-      const stored = msgs.map((m) => ({
-        role: m.sender,
-        contenu: m.text,
-        ts: new Date().toISOString(),
-      }));
-      const firstUser = msgs.find((m) => m.sender === 'user');
-      const titre = (firstUser ? firstUser.text : 'Conversation').slice(0, 60);
-      if (chatConvId.current) {
-        await supabase!
-          .from('chatbot_conversations')
-          .update({ messages: stored, titre, updated_at: new Date().toISOString() })
-          .eq('id', chatConvId.current);
-      } else {
-        const { data } = await supabase!
-          .from('chatbot_conversations')
-          .insert({ user_id: uid, titre, messages: stored })
-          .select('id')
-          .maybeSingle();
-        if (data) chatConvId.current = (data as any).id;
-      }
-    }, 800);
   };
 
   // Page titles map
@@ -761,9 +602,10 @@ export function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Garde : un compte ACTIF ne doit jamais voir les pages blocantes (PEN-017 §6).
+  // Garde : DÉSACTIVÉE (auth en pause — pas de session à contrôler).
   // PEN-019 : matrice complète rôle × route + traçage acces_refuse.
   React.useEffect(() => {
+    if (AUTH_BYPASSED) return;
     if (!useRealAuth || !authReady) return;
     const ctx = {
       session: !!authUserId,
@@ -803,7 +645,7 @@ export function App() {
       return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} onGoogleSignIn={handleGoogleSignIn} />;
     }
     if (activePage === 'login') {
-      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} onGoogleSignIn={handleGoogleSignIn} onGoSignup={() => handleNavigate('inscription')} notice={authNotice} />;
+      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} onGoogleSignIn={handleGoogleSignIn} onGoSignup={() => handleNavigate('inscription')} />;
     }
     return <LandingPage onNavigate={handleNavigate} />;
   }
@@ -875,7 +717,7 @@ export function App() {
             pageTitle={pageTitles[activePage] || 'Legal Flow'}
             dateReference={dateReference}
             onQaDateChange={() => setDateTick((t) => t + 1)}
-            onLogout={useRealAuth && authUserId ? handleLogout : undefined}
+            onLogout={handleLogout}
             onOpenAssistant={() => setIsAssistantOpen(true)}
             onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
             onNavigateToVeille={() => {
@@ -885,6 +727,7 @@ export function App() {
             unreadCount={unreadNotifCount}
             currentRole={currentRole}
             currentUser={currentUser}
+            onSelectProfile={handleSelectProfile}
           />
 
           {/* Bandeau d'espace client pour le Gestionnaire quand il est dans un dossier */}
@@ -1094,8 +937,8 @@ export function App() {
               flashs={flashs}
               key={authUserId || 'demo'}
               userId={authUserId}
-              initialMessages={chatInitial}
-              onMessagesChange={handleChatMessagesChange}
+initialMessages={null}
+onMessagesChange={() => {}}
             />
           </div>
         )}

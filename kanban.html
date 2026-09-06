@@ -1710,6 +1710,30 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Point ouvert : libellé provider exact côté GoTrue (firebase) à confirmer au 1er test — le message d’erreur du pont guidera (issuer non autorisé = config dashboard manquante).',
     historique: ['2026-09-06 : créé (retour consigne initiale Firebase Auth).', '2026-09-06 : TERMINÉ côté code, config consoles + tests navigateur restants.', '2026-09-06 : DÉPLOYÉ sur legalflowio.web.app (bundle vérifié identique au local).']
+  },
+  {
+    id: 'PEN-041', state: 'done', priority: 'haute',
+    title: 'Bypass auth temporaire + sélecteur de profils démo reconstruit',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['auth', 'demo', 'ux', 'topbar'],
+    depends_on: [],
+    objectif: 'Mettre l’auth en pause sans rien casser : login/signup visuels redirigent direct vers l’app, sessions/tokens/OAuth désactivés, sélecteur de profils démo reconstruit dans la Topbar. Base et reste intacts.',
+    contexte: 'Blocages répétés auth. Niveaux confirmés dans le code (mockUsers : super_admin, gestionnaire, utilisateur_complet, utilisateur_incomplet) — aucune devinette nécessaire.',
+    etapes: [
+      'Flag AUTH_BYPASSED + garde désactivée + portails adaptés.',
+      'LoginPage/InscriptionPage visuelles pures (aucun appel).',
+      'ProfileSwitcher : dropdown 4 profils issus de mockUsers, badge couleur par niveau.',
+      'Suppression code session (enterRealSession, effects, chat persist, handlers auth).',
+      'Lint vert, arithmétique vérifiée.'
+    ],
+    criteres: [
+      'Clic Se connecter / S’inscrire / Google → dashboard, sans erreur console.',
+      'Le sélecteur liste 4 profils et bascule rôle + entreprise + dashboard.',
+      'Aucune requête auth émise (sessions, tokens, OAuth).',
+      'Données démo affichées comme avant la pause.',
+    ],
+    notes: 'Réactivation : AUTH_BYPASSED=false + restaurer bloc session depuis git. EnAttente/Suspendu conservés (inaccessibles sans session).',
+    historique: ['2026-09-06 : créé (pause auth demandée).', '2026-09-06 : TERMINÉ.']
   }
 ];
 

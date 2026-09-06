@@ -3,12 +3,6 @@ import { Building2, Briefcase, ArrowLeft } from 'lucide-react';
 import type { PageId } from '../types';
 import { LegalFlowLogo } from '../components/LegalFlowLogo';
 import { GoogleIcon } from '../components/GoogleIcon';
-import {
-  signupAccount,
-  createEntrepriseProfile,
-  createCabinetProfile,
-  savePendingInscription,
-} from '../services/inscriptionService';
 
 interface InscriptionPageProps {
   onNavigate: (page: PageId) => void;
@@ -22,10 +16,10 @@ const inputCls =
   'w-full border border-[#E5E5F0] rounded-xl px-3.5 py-2.5 text-sm text-[#171A2E] placeholder-[#8C90A4] focus:outline-none focus:border-[#4F46A0] transition-colors';
 const labelCls = 'text-xs font-bold text-[#20263A] mb-1.5 block';
 
-function validEmail(v: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
-}
-
+/**
+ * Page d'inscription — VISUELLE UNIQUEMENT (auth en pause).
+ * Aucune validation, aucun appel : chaque action entre dans l'app.
+ */
 export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, onComplete, onGoogleSignIn }) => {
   const [kind, setKind] = useState<SignupType>('entreprise');
   const [raisonSociale, setRaisonSociale] = useState('');
@@ -36,92 +30,10 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
   const [ville, setVille] = useState('');
   const [numAgrement, setNumAgrement] = useState('');
   const [typeCabinet, setTypeCabinet] = useState('Comptable');
-  const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSuccess(null);
-    if (!raisonSociale.trim()) {
-      setError(kind === 'entreprise' ? 'Indiquez la raison sociale.' : 'Indiquez la raison sociale du cabinet.');
-      return;
-    }
-    if (kind === 'cabinet' && !nomGestionnaire.trim()) {
-      setError('Indiquez le nom du gestionnaire.');
-      return;
-    }
-    if (!validEmail(email)) {
-      setError('Email invalide.');
-      return;
-    }
-    if (password.length < 6) {
-      setError('Mot de passe : 6 caractères minimum.');
-      return;
-    }
-    if (password !== confirm) {
-      setError('La confirmation ne correspond pas au mot de passe.');
-      return;
-    }
-    setLoading(true);
-    try {
-      const fullName = kind === 'entreprise' ? raisonSociale.trim() : nomGestionnaire.trim();
-      const signed = await signupAccount(email.trim(), password, fullName);
-      if (signed.error || !signed.userId) {
-        setError(signed.error || 'Inscription impossible. Réessayez.');
-        return;
-      }
-      if (signed.hasSession) {
-        const res =
-          kind === 'entreprise'
-            ? await createEntrepriseProfile(signed.userId, {
-                raisonSociale: raisonSociale.trim(),
-                email: email.trim(),
-              })
-            : await createCabinetProfile(signed.userId, {
-                raisonSociale: raisonSociale.trim(),
-                nomGestionnaire: nomGestionnaire.trim(),
-                email: email.trim(),
-                ville: ville.trim(),
-                numAgrement: numAgrement.trim(),
-                typeCabinet,
-              });
-        if (!res.ok) {
-          setError(res.error || 'Finalisation impossible. Réessayez.');
-          return;
-        }
-        onComplete();
-        return;
-      }
-      // Pas de session immédiate (email à confirmer) : finalisation à la 1re connexion.
-      // PEN-029 : payload minimal en localStorage (jamais de mot de passe ni téléphone).
-      if (kind === 'entreprise') {
-        savePendingInscription({
-          kind,
-          userId: signed.userId,
-          at: Date.now(),
-          fields: { raisonSociale: raisonSociale.trim(), email: email.trim() },
-        });
-      } else {
-        savePendingInscription({
-          kind,
-          userId: signed.userId,
-          at: Date.now(),
-          fields: {
-            raisonSociale: raisonSociale.trim(),
-            nomGestionnaire: nomGestionnaire.trim(),
-            email: email.trim(),
-          },
-        });
-      }
-      setSuccess(
-        'Compte créé. Confirmez votre email puis connectez-vous — votre espace sera finalisé automatiquement.'
-      );
-    } finally {
-      setLoading(false);
-    }
+    onComplete();
   };
 
   return (
@@ -259,24 +171,12 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
               </div>
             </div>
 
-            {error && (
-              <div className="text-xs font-bold text-[#B91C1C] bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-3 py-2.5">
-                {error}
-              </div>
-            )}
-            {success && (
-              <div className="text-xs font-bold text-[#1F9254] bg-[#E7F6EE] border border-[#A7F3D0] rounded-xl px-3 py-2.5">
-                {success}
-              </div>
-            )}
-
             <button
               id="btnSignup"
               type="submit"
-              disabled={loading}
-              className="w-full bg-[#4F46A0] hover:bg-[#3D3680] disabled:opacity-60 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all cursor-pointer"
+              className="w-full bg-[#4F46A0] hover:bg-[#3D3680] text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all cursor-pointer"
             >
-              {loading ? 'Création…' : 'Créer mon compte'}
+              Créer mon compte
             </button>
           </form>
 
@@ -288,15 +188,11 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
           <button
             id="btnGoogleSignup"
             type="button"
-            disabled={googleLoading}
-            onClick={() => {
-              setGoogleLoading(true);
-              onGoogleSignIn();
-            }}
-            className="w-full bg-white hover:bg-[#F6F6FB] disabled:opacity-60 text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            onClick={onGoogleSignIn}
+            className="w-full bg-white hover:bg-[#F6F6FB] text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <GoogleIcon />
-            <span>{googleLoading ? 'Redirection…' : 'S’inscrire avec Google'}</span>
+            <span>S’inscrire avec Google</span>
           </button>
 
           <button
