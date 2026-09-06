@@ -35,6 +35,7 @@ import {
 } from './services/supabaseClient';
 import { LoginPage } from './components/LoginPage';
 import { canAccess } from './services/routeGuard';
+import { pageToPath, pathToPage } from './services/router';
 import { Loader } from './components/Loader';
 import { entityToProfile, dbEntrepriseToEntity } from './utils/transformers';
 import { logConnexion, logDeconnexion } from './services/journalEvents';
@@ -103,7 +104,14 @@ export function routeAfterLogin(role: string, statut: string): PageId {
 }
 
 export function App() {
-  const [activePage, setActivePage] = useState<PageId>('landing');
+  // Page initiale = URL réelle (lien direct / favori / refresh).
+  const [activePage, setActivePage] = useState<PageId>(() => {
+    try {
+      return pathToPage(window.location.pathname);
+    } catch {
+      return 'landing';
+    }
+  });
   const [currentUser, setCurrentUser] = useState<AppUser>(mockUsers.gestionnaire);
   const [currentRole, setCurrentRole] = useState<UserRole>('gestionnaire');
   const [companies, setCompanies] = useState<CompanyEntity[]>(initialCompaniesEntities);
@@ -717,12 +725,41 @@ export function App() {
   };
 
   const handleNavigate = (page: PageId | string) => {
-    if (page === 'registre') {
-      setActivePage('dashboard');
-    } else {
-      setActivePage(page as PageId);
+    const target = (page === 'registre' ? 'dashboard' : page) as PageId;
+    // Navigation utilisateur : pousse l'URL (bouton précédent OK).
+    try {
+      const path = pageToPath(target);
+      if (window.location.pathname !== path) window.history.pushState({ page: target }, '', path);
+    } catch {
+      /* navigation sans History API */
     }
+    setActivePage(target);
   };
+
+  // Sync URL ← état (redirects/gardes : replace, pas d'entrée parasite) + titre onglet.
+  // Écoute précédent/suivant : popstate → état.
+  React.useEffect(() => {
+    try {
+      const path = pageToPath(activePage);
+      if (window.location.pathname !== path) window.history.replaceState({ page: activePage }, '', path);
+    } catch {
+      /* noop */
+    }
+    const title = pageTitles[activePage];
+    if (title) document.title = `${title} — Legal Flow`;
+  }, [activePage]);
+
+  React.useEffect(() => {
+    const onPopState = () => {
+      try {
+        setActivePage(pathToPage(window.location.pathname));
+      } catch {
+        /* noop */
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Garde : un compte ACTIF ne doit jamais voir les pages blocantes (PEN-017 §6).
   // PEN-019 : matrice complète rôle × route + traçage acces_refuse.
@@ -766,7 +803,7 @@ export function App() {
       return <InscriptionPage onNavigate={handleNavigate} onComplete={handleInscriptionComplete} onGoogleSignIn={handleGoogleSignIn} />;
     }
     if (activePage === 'login') {
-      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} onGoogleSignIn={handleGoogleSignIn} notice={authNotice} signupHint />;
+      return <LoginPage onLogin={handleLogin} onResetPassword={handleResetPassword} onGoogleSignIn={handleGoogleSignIn} onGoSignup={() => handleNavigate('inscription')} notice={authNotice} />;
     }
     return <LandingPage onNavigate={handleNavigate} />;
   }

@@ -1638,7 +1638,31 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'La clé privée n’apparaît dans aucun chat, fichier ou log (Vault uniquement).',
     ],
     notes: 'Le wrapper donne un ACCÈS LECTURE à la liste Firebase. Il ne connecte personne et n’alimente ni Supabase Auth ni RLS.',
-    historique: ['2026-09-06 : créé (infra prête, bloqué sur clé service).', '2026-09-06 : clé reçue et stockée en Vault (sa_key_id branché), objet corrigé en auth/users (doc officielle). Reste : erreur « invalid Firebase response » — probablement 0 utilisateur côté Firebase, à vérifier console puis retester.']
+    historique: ['2026-09-06 : créé (infra prête, bloqué sur clé service).', '2026-09-06 : clé Vault branchée, objet auth/users corrigé. Reste : 0 utilisateur côté Firebase à vérifier.']
+  },
+  {
+    id: 'PEN-038', state: 'done', priority: 'haute',
+    title: 'Routing URL réel + fixes QA login (lien inscription, états boutons)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['routing', 'qa', 'login', 'ux'],
+    depends_on: [],
+    objectif: 'URLs réelles par page (précédent, favoris, liens directs, SEO de base), footer login corrigé vers /signup, états de chargement Google.',
+    contexte: 'QA : URL figée, footer login absurde (« Déjà un compte ? » sur la page login), boutons sans feedback.',
+    etapes: [
+      'router.ts : table PageId ↔ paths + aliases (/signup, /register, /inscription).',
+      'App : pushState à la navigation, replaceState pour redirects, popstate, init depuis URL, titre onglet.',
+      'Login : footer « Pas encore de compte ? Créer un compte » → /signup ; loading Google.',
+      'Inscription : loading Google.',
+      'Deploy + vérif /login /signup /dashboard en 200.'
+    ],
+    criteres: [
+      'L’URL change à chaque navigation, précédent/suivant OK.',
+      '/login et /signup directs affichent les bonnes pages.',
+      'Footer login pointe vers /signup.',
+      'Boutons Google affichent « Redirection… » au clic.',
+    ],
+    notes: 'Testé : router 12/12 en isolation, lint vert, build + deploy OK, routes live en 200. Clics navigateur à confirmer côté utilisateur.',
+    historique: ['2026-09-06 : créé (retours QA page login/landing).', '2026-09-06 : TERMINÉ, déployé.']
   }
 ];
 

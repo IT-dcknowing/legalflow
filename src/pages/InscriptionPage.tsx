@@ -37,6 +37,7 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
   const [numAgrement, setNumAgrement] = useState('');
   const [typeCabinet, setTypeCabinet] = useState('Comptable');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -287,11 +288,15 @@ export const InscriptionPage: React.FC<InscriptionPageProps> = ({ onNavigate, on
           <button
             id="btnGoogleSignup"
             type="button"
-            onClick={onGoogleSignIn}
-            className="w-full bg-white hover:bg-[#F6F6FB] text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            disabled={googleLoading}
+            onClick={() => {
+              setGoogleLoading(true);
+              onGoogleSignIn();
+            }}
+            className="w-full bg-white hover:bg-[#F6F6FB] disabled:opacity-60 text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <GoogleIcon />
-            <span>S’inscrire avec Google</span>
+            <span>{googleLoading ? 'Redirection…' : 'S’inscrire avec Google'}</span>
           </button>
 
           <button

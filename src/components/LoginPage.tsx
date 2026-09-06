@@ -7,8 +7,8 @@ interface LoginPageProps {
   onLogin: (email: string, password: string) => Promise<string | null>;
   onResetPassword: (email: string) => Promise<void>;
   onGoogleSignIn: () => void;
+  onGoSignup: () => void;
   notice?: string | null;
-  signupHint?: boolean;
 }
 
 /**
@@ -20,8 +20,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onLogin,
   onResetPassword,
   onGoogleSignIn,
+  onGoSignup,
   notice,
-  signupHint,
 }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,6 +30,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // PEN-015 : mode reset (message neutre dans tous les cas, pas d'énumération).
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   // PEN-031 UI-002 : erreur immédiate sous l'input dès que le format est invalide.
   const [emailTouched, setEmailTouched] = useState(false);
   const emailInvalid = emailTouched && email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
@@ -236,24 +237,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <button
                 id="btnGoogleSignIn"
                 type="button"
-                onClick={onGoogleSignIn}
-                className="w-full bg-white hover:bg-[#F6F6FB] text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                disabled={googleLoading}
+                onClick={() => {
+                  setGoogleLoading(true);
+                  onGoogleSignIn();
+                }}
+                className="w-full bg-white hover:bg-[#F6F6FB] disabled:opacity-60 text-[#20263A] border border-[#E5E5F0] font-bold text-sm px-4 py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
               >
                 <GoogleIcon />
-                <span>Continuer avec Google</span>
+                <span>{googleLoading ? 'Redirection…' : 'Continuer avec Google'}</span>
               </button>
             </>
           )}
 
           <p className="text-[11px] text-[#8C90A4] mt-4 mb-0 text-center">
-            {signupHint ? (
-              <>
-                Déjà un compte ?{' '}
-                <span className="text-[#4F46A0] font-bold">Connectez-vous ci-dessus.</span>
-              </>
-            ) : (
-              'Pas de compte ? Créez-le depuis la page d’accueil.'
-            )}
+            Pas encore de compte ?{' '}
+            <button
+              type="button"
+              onClick={onGoSignup}
+              className="text-[#4F46A0] font-bold hover:underline cursor-pointer"
+            >
+              Créer un compte
+            </button>
           </p>
         </div>
       </div>
