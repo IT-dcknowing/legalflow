@@ -1638,7 +1638,7 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
       'La clé privée n’apparaît dans aucun chat, fichier ou log (Vault uniquement).',
     ],
     notes: 'Le wrapper donne un ACCÈS LECTURE à la liste Firebase. Il ne connecte personne et n’alimente ni Supabase Auth ni RLS.',
-    historique: ['2026-09-06 : créé (infra prête, bloqué sur clé service).']
+    historique: ['2026-09-06 : créé (infra prête, bloqué sur clé service).', '2026-09-06 : clé reçue et stockée en Vault (sa_key_id branché), objet corrigé en auth/users (doc officielle). Reste : erreur « invalid Firebase response » — probablement 0 utilisateur côté Firebase, à vérifier console puis retester.']
   }
 ];
 

@@ -27,4 +27,6 @@ CREATE FOREIGN TABLE firebase.users (
   attrs JSONB
 )
 SERVER firebase_auth_server
-OPTIONS (object 'Users');
+-- Doc officielle : l'objet Auth s'appelle 'auth/users' ('Users' seul
+-- provoque « relative URL without a base »).
+OPTIONS (object 'auth/users');
