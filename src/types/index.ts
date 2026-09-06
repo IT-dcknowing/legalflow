@@ -5,6 +5,8 @@ export type PageId =
   | 'landing'
   | 'login'
   | 'inscription'
+  // Assistant IA (pleine page via sidebar)
+  | 'assistant'
   // Pages blocantes (session non active)
   | 'en_attente'
   | 'suspendu'

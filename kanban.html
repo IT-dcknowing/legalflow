@@ -1734,6 +1734,28 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Réactivation : AUTH_BYPASSED=false + restaurer bloc session depuis git. EnAttente/Suspendu conservés (inaccessibles sans session).',
     historique: ['2026-09-06 : créé (pause auth demandée).', '2026-09-06 : TERMINÉ.']
+  },
+  {
+    id: 'PEN-042', state: 'done', priority: 'haute',
+    title: 'QA : entrée sidebar LEGAL FLOW AI (pleine page) + Secteur modifiable dans Profil',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['qa', 'sidebar', 'assistant', 'profil', 'ux'],
+    depends_on: [],
+    objectif: 'Retours QA : (1) LEGAL FLOW AI accessible directement en pleine page depuis la sidebar, (2) champ Secteur d’activité modifiable dans l’édition Profil.',
+    contexte: 'Vérifié avant de corriger : CompleteProfileModal et AddCompanyModal AVAIENT déjà le secteur — seul le formulaire inline de ProfilPage l’oubliait (confirmé par grep des champs).',
+    etapes: [
+      'PageId assistant + route /assistant + titre onglet.',
+      'Entrée sidebar LEGAL FLOW AI (companyNavItems) → ouvre le mode pleine page existant ; fermeture/réduction redirigent vers l’accueil du rôle (jamais de page vide).',
+      'ProfilPage : select Secteur (union des 2 listes existantes pour ne jamais perdre la valeur) + secteur+secteurActivite synchronisés à la sauvegarde.',
+      'Lint vert, build + deploy, vérif live.'
+    ],
+    criteres: [
+      'Clic sidebar → pleine page IA directe, URL /assistant.',
+      'Fermer/réduire → retour dashboard du rôle, pas de page vide.',
+      'Secteur modifiable et persisté (moteur d’obligations impacté).',
+    ],
+    notes: 'Le moteur lit secteurActivite (repli secteur) : les 2 champs sont écrits ensemble.',
+    historique: ['2026-09-06 : créé (retours QA).', '2026-09-06 : TERMINÉ, déployé.']
   }
 ];
 

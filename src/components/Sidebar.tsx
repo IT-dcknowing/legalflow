@@ -20,6 +20,7 @@ import {
   Briefcase,
   Settings,
   History,
+  MessageSquare,
 } from 'lucide-react';
 import { PageId, UserRole, CompanyEntity } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
@@ -234,6 +235,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'entreprise_historique',
       label: 'Mon historique',
       icon: <History className="w-[18px] h-[18px]" />,
+    },
+    {
+      id: 'assistant',
+      label: 'LEGAL FLOW AI',
+      icon: <MessageSquare className="w-[18px] h-[18px]" />,
     },
   ];
 

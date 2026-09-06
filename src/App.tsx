@@ -365,6 +365,7 @@ export function App() {
     landing: 'Accueil',
     login: 'Connexion',
     inscription: 'Créer mon compte',
+    assistant: 'Assistant LEGAL FLOW AI',
     en_attente: 'Compte en cours d’activation',
     suspendu: 'Compte suspendu',
     accueil: 'Accueil',
@@ -567,6 +568,11 @@ export function App() {
 
   const handleNavigate = (page: PageId | string) => {
     const target = (page === 'registre' ? 'dashboard' : page) as PageId;
+    // Entrée sidebar LEGAL FLOW AI : ouvre directement le mode pleine page existant.
+    if (target === 'assistant') {
+      setIsAssistantOpen(true);
+      setIsAssistantFull(true);
+    }
     // Navigation utilisateur : pousse l'URL (bouton précédent OK).
     try {
       const path = pageToPath(target);
@@ -575,6 +581,30 @@ export function App() {
       /* navigation sans History API */
     }
     setActivePage(target);
+  };
+
+  // Page de repli en quittant l'assistant pleine page (jamais de page vide).
+  const assistantFallbackPage = (): PageId =>
+    currentRole === 'gestionnaire' && isGestionnaireInCompanyMode
+      ? 'dashboard'
+      : getDefaultPageForRole(currentRole);
+
+  // Fermeture du panneau : si on venait de l'entrée sidebar, retour à l'accueil du rôle.
+  const handleCloseAssistant = () => {
+    setIsAssistantOpen(false);
+    if (activePage === 'assistant') {
+      setActivePage(assistantFallbackPage());
+    }
+  };
+
+  // Réduction pleine page → panneau : idem, pas de page vide derrière.
+  const handleToggleAssistantFull = () => {
+    if (isAssistantFull && activePage === 'assistant') {
+      setIsAssistantFull(false);
+      setActivePage(assistantFallbackPage());
+      return;
+    }
+    setIsAssistantFull(!isAssistantFull);
   };
 
   // Sync URL ← état (redirects/gardes : replace, pas d'entrée parasite) + titre onglet.
@@ -924,9 +954,9 @@ export function App() {
           >
             <AssistantPanel
               isOpen={isAssistantOpen}
-              onClose={() => setIsAssistantOpen(false)}
+              onClose={handleCloseAssistant}
               isFull={isAssistantFull}
-              onToggleFull={() => setIsAssistantFull(!isAssistantFull)}
+              onToggleFull={handleToggleAssistantFull}
               onNavigate={(page) => {
                 setActivePage(page);
                 if (isAssistantFull) setIsAssistantFull(false);

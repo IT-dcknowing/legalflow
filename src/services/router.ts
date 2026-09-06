@@ -11,6 +11,7 @@ const PATHS: Array<[PageId, string]> = [
   ['landing', '/'],
   ['login', '/login'],
   ['inscription', '/signup'],
+  ['assistant', '/assistant'],
   ['en_attente', '/en-attente'],
   ['suspendu', '/suspendu'],
   ['accueil', '/accueil'],

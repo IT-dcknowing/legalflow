@@ -138,6 +138,35 @@ export const ProfilPage: React.FC<ProfilPageProps> = ({
               </div>
             </div>
             <div>
+              <label className="text-[11.5px] font-bold text-[#6B6F85] block mb-1">Secteur d'activité</label>
+              <select
+                value={formData.secteurActivite}
+                onChange={(e) =>
+                  setFormData({ ...formData, secteurActivite: e.target.value, secteur: e.target.value })
+                }
+                className="w-full border border-[#E5E5F0] rounded-[8px] p-2 text-[13px] font-bold bg-white"
+              >
+                {[
+                  'BTP / Travaux publics',
+                  'BTP / Construction métallique',
+                  'Commerce de gros',
+                  'Commerce de gros & détail',
+                  'Industrie & Transformation',
+                  'Services & Transports',
+                  'Services & Conseil',
+                  'Hôtellerie & Restauration',
+                  'Transport & Logistique',
+                ].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10.5px] text-[#8C90A4] mt-1 mb-0">
+                Détermine le paramétrage automatique de vos obligations et échéances fiscales.
+              </p>
+            </div>
+            <div>
               <label className="text-[11.5px] font-bold text-[#6B6F85] block mb-1">Adhérent CGA</label>
               <input
                 type="text"
