@@ -106,7 +106,7 @@ Navigateur ──► Firebase Hosting (statique : React buildé)
    │                │  API Supabase directe (données, auth, storage, RAG)
    │                ▼
    └──────────► Supabase : Postgres + RLS + Auth + Storage + pgvector
-   (local) ──► Express :3030? non → :3000 (/api/chat, /api/rag, /metrics)
+   (local) ──► Express :3000 (/api/chat, /api/rag, /metrics)
 ```
 
 ---
