@@ -183,6 +183,14 @@ const LOCAL_LEGAL_CORPUS = [
       "Sanctions et pénalités de contrôle fiscal : Tout retard dans le dépôt d'une déclaration mensuelle entraîne une majoration automatique de 10% des droits dus. En cas de taxation d'office ou de mauvaise foi constatée lors d'un contrôle sur pièces ou vérification générale, la majoration est portée à 25% voire 50%, majorée d'un intérêt de retard de 1% par mois. L'Attestation de Régularité Fiscale (ARF) est immédiatement révoquée jusqu'à apurement complet.",
     keywords: ['lpf', 'procedure', 'controle', 'sanction', 'penalite', '10%', '25%', '50%', 'arf', 'interet', 'retard'],
   },
+  {
+    id: 'cgi-imf-forfaitaire',
+    source_fichier: 'CGI 2026 TEXT.txt',
+    reference_article: 'Dispositions relatives à l’impôt minimum forfaitaire (CGI)',
+    contenu:
+      "Impôt Minimum Forfaitaire (IMF) : impôt plancher dû par les entreprises relevant des régimes concernés en Côte d'Ivoire. Il est STRICTEMENT distinct des retenues sur salaires (ITS, Article 115 du CGI) : quand un dirigeant écrit « IMF » dans un contexte d'entreprise ivoirienne, il s'agit de l'Impôt Minimum Forfaitaire. L'échéance exacte, l'assiette et les modalités de déclaration et de paiement de l'IMF sont fixées par le CGI 2026 : ne citer un article, un taux ou une date que s'ils figurent dans un extrait retrouvé, sinon l'indiquer explicitement au lieu d'inventer.",
+    keywords: ['imf', 'impot minimum forfaitaire', 'minimum forfaitaire', 'forfaitaire', 'plancher'],
+  },
 ];
 
 function stemFr(word) {
@@ -221,6 +229,7 @@ const THEMES = [
   { id: 'embauche', keywords: ['embauche', 'embaucher', 'contrat', 'cdd', 'cdi', 'smig', 'salaire', 'recrutement', 'immatriculation', 'registre employeur'] },
   { id: 'douane', keywords: ['douane', 'douanes', 'bsc', 'sydonia', 'guce', 'transit', 'importation', 'import', 'exportation', 'dédouanement', 'fret', 'connaissement'] },
   { id: 'arf', keywords: ['arf', 'attestation de régularité', 'attestation fiscale', 'attestation', 'quitus fiscal', 'régularité'] },
+  { id: 'imf', keywords: ['imf', 'impot minimum forfaitaire', 'minimum forfaitaire'] },
 ];
 
 const STEM_CACHE = new Map();
@@ -323,6 +332,351 @@ async function searchLegalDocuments(query, limit = 6) {
   return searchLocalCorpus(query, limit);
 }
 
+// ---------------------------------------------------------------------------
+// LEGAL FLOW CONTEXT ENGINE — mémoire conversationnelle explicite.
+// Pipeline : message → compréhension (intent + entités + corrections) →
+// mémoire de session → recherche juridique → raisonnement LLM → réponse.
+// La mémoire n'est JAMAIS laissée au seul modèle : un état structuré par
+// expéditeur est maintenu (Firestore, repli mémoire volatile) et injecté
+// dans chaque appel LLM.
+// ---------------------------------------------------------------------------
+
+const SESSION_TTL_MS = 24 * 3600 * 1000;
+const HISTORY_MAX = 12;
+const HISTORY_FOR_LLM = 6;
+
+// Acronymes fiscaux ivoiriens : la désambiguïsation est EXPLICITE.
+// On ne devine jamais silencieusement (ex : IMF ≠ ITS).
+const ACRONYMS = {
+  IMF: { full: 'Impôt minimum forfaitaire', aliases: ['imf', 'impot minimum forfaitaire', 'minimum forfaitaire'], notToConfuse: 'les retenues sur salaires (ITS)' },
+  ITS: { full: 'Impôt sur les traitements et salaires', aliases: ['its', 'retenue sur salaire', 'retenues sur salaires'] },
+  TVA: { full: 'Taxe sur la valeur ajoutée', aliases: ['tva', 'taxe sur la valeur ajoutee'] },
+  CNPS: { full: 'Caisse nationale de prévoyance sociale', aliases: ['cnps'] },
+  CMU: { full: 'Couverture maladie universelle', aliases: ['cmu', 'couverture maladie'] },
+  CGA: { full: 'Centre de gestion agréé', aliases: ['cga', 'centre de gestion agree'] },
+  FDFP: { full: 'Fonds de développement de la formation professionnelle', aliases: ['fdfp', 'formation professionnelle'] },
+  ARF: { full: 'Attestation de régularité fiscale', aliases: ['arf', 'attestation de regularite'] },
+  DISA: { full: 'Déclaration individuelle des salaires annuels', aliases: ['disa'] },
+  BIC: { full: 'Bénéfice industriel et commercial', aliases: ['bic'] },
+  RSI: { full: 'Régime simplifié d’imposition', aliases: ['rsi', 'regime simplifie'] },
+  RME: { full: 'Régime des microentreprises', aliases: ['rme', 'microentreprise'] },
+  CGI: { full: 'Code général des impôts', aliases: ['cgi', 'code general des impots'] },
+  LPF: { full: 'Livre de procédures fiscales', aliases: ['lpf'] },
+  BSC: { full: 'Bordereau de suivi des cargaisons', aliases: ['bsc'] },
+};
+
+// Taxonomie des intentions (mots normalisés sans accents).
+const INTENTS = [
+  { id: 'PAYMENT_DEADLINE', hints: 'échéance paiement déclaration date versement', keywords: ['quand', 'moment', 'date', 'echeance', 'delai', 'limite', 'paie', 'paiement', 'payer', 'verse', 'acquitte', 'avant quand'] },
+  { id: 'RATE', hints: 'taux montant pourcentage', keywords: ['taux', 'pourcent', 'pourcentage', 'quel montant'] },
+  { id: 'CALCULATION', hints: 'calcul assiette base montant', keywords: ['calcul', 'calcule', 'combien', 'assiette', 'base de calcul', 'coute'] },
+  { id: 'ELIGIBILITY', hints: 'conditions éligibilité droit', keywords: ['eligible', 'eligibilite', 'droit', 'puis', 'conditions', 'qui peut', 'concerne'] },
+  { id: 'EXEMPTION', hints: 'exonération dispense', keywords: ['exempte', 'exoneration', 'dispense', 'exonere'] },
+  { id: 'PENALTY', hints: 'pénalités sanctions retard majoration', keywords: ['penalite', 'sanction', 'majoration', 'amende', 'retard', 'risque', 'oubli', 'pas paye'] },
+  { id: 'DECLARATION', hints: 'déclaration formulaire télédéclaration', keywords: ['declarer', 'declaration', 'formulaire', 'teledeclarer', 'depot', 'depose'] },
+  { id: 'PROCEDURE', hints: 'démarche procédure étapes', keywords: ['demarche', 'procedure', 'etape', 'comment faire', 'pas a pas', 'comment proceder'] },
+  { id: 'LEGAL_BASIS', hints: 'article texte loi référence', keywords: ['article', 'texte', 'loi', 'base legale', 'reference', 'quelle loi', 'stipule'] },
+  { id: 'DOCUMENTS_REQUIRED', hints: 'documents pièces justificatifs', keywords: ['document', 'piece', 'quittance', 'fournir', 'attestation', 'justificatif', 'papier'] },
+  { id: 'GREETING', hints: '', keywords: ['bonjour', 'salut', 'hello', 'bonsoir', 'coucou', 'bjr'] },
+  { id: 'EXPLAIN', hints: '', keywords: [] },
+];
+
+const CORRECTION_PATTERNS = [
+  /je parle (de|d')/i, /je parlais (de|d')/i, /je voulais dire/i,
+  /\bnon\b[,.]?\s+\S/i, /ce n'est pas/i, /c'est pas/i, /pas .* mais /i,
+  /plut[oô]t/i, /tu te trompes/i, /vous vous trompez/i, /erreur/i,
+  /je me suis (mal exprim|tromp)/i, /mauvais(e)? (sujet|reponse|interpr)/i,
+];
+
+function detectIntent(normalizedText) {
+  const padded = ' ' + normalizedText + ' ';
+  const words = normalizedText.split(/\s+/).filter(Boolean);
+  const wordHit = (kw) => {
+    for (const w of words) {
+      if (w === kw) return true;
+      // Racines asymétriques (calcul/calculer, paie/paiement) : préfixe croisé.
+      if (kw.length >= 4 && w.startsWith(kw)) return true;
+      if (w.length >= 4 && kw.startsWith(w)) return true;
+    }
+    return false;
+  };
+  let best = { id: 'EXPLAIN', score: 0 };
+  for (const intent of INTENTS) {
+    if (intent.id === 'EXPLAIN') continue;
+    let score = 0;
+    for (const kw of intentKeywordStems(intent)) {
+      if (kw.includes(' ')) {
+        if (padded.includes(kw)) score += 2;
+      } else if (wordHit(kw)) {
+        score += 1;
+      }
+    }
+    if (score > best.score) best = { id: intent.id, score };
+  }
+  return best;
+}
+
+// Mots-clés racinisés des deux côtés (même pattern que themeStems).
+const INTENT_STEM_CACHE = new Map();
+function intentKeywordStems(intent) {
+  let cached = INTENT_STEM_CACHE.get(intent.id);
+  if (!cached) {
+    cached = [...new Set(intent.keywords.map((k) => normalizeQuery(k)).filter(Boolean))];
+    INTENT_STEM_CACHE.set(intent.id, cached);
+  }
+  return cached;
+}
+
+const ACRONYM_STEM_CACHE = new Map();
+function acronymStems(code) {
+  let cached = ACRONYM_STEM_CACHE.get(code);
+  if (!cached) {
+    cached = [...new Set(ACRONYMS[code].aliases.map((a) => normalizeQuery(a)).filter(Boolean))];
+    ACRONYM_STEM_CACHE.set(code, cached);
+  }
+  return cached;
+}
+
+function detectAcronyms(rawText, normalizedText) {
+  const upper = ' ' + String(rawText || '').toUpperCase() + ' ';
+  const padded = ' ' + normalizedText + ' ';
+  const found = [];
+  for (const code of Object.keys(ACRONYMS)) {
+    const entry = ACRONYMS[code];
+    if (upper.includes(' ' + code + ' ')) {
+      found.push({ code, ...entry });
+      continue;
+    }
+    for (const alias of acronymStems(code)) {
+      if (padded.includes(' ' + alias + ' ') || (alias.includes(' ') && padded.includes(alias))) {
+        found.push({ code, ...entry });
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+function isCorrectionMessage(rawText) {
+  return CORRECTION_PATTERNS.some((re) => re.test(String(rawText || '')));
+}
+
+function isQuestionLike(rawText) {
+  const t = String(rawText || '');
+  return t.includes('?') || /^(quand|comment|quel|quelle|combien|pourquoi|ou|qui|quoi|est-ce|quel est)/i.test(t.trim());
+}
+
+/** Extrait le concept corrigé (« je parle de X » → X), null sinon. */
+function extractCorrectionTopic(rawText) {
+  const t = String(rawText || '');
+  const m = t.match(/je parl(?:e|ais) (?:de|d')(.+)$/i) || t.match(/je voulais dire[\s:]+(.+)$/i);
+  if (!m) return null;
+  return m[1].replace(/[.?!\s]+$/g, '').trim().slice(0, 120) || null;
+}
+
+function canonicalizeConcept(raw) {
+  const norm = normalizeQuery(raw || '');
+  const padded = ' ' + norm + ' ';
+  for (const code of Object.keys(ACRONYMS)) {
+    const entry = ACRONYMS[code];
+    if (padded.includes(' ' + code.toLowerCase() + ' ')) return { full: entry.full, aliases: entry.aliases };
+    for (const alias of acronymStems(code)) {
+      if (padded.includes(' ' + alias + ' ')) return { full: entry.full, aliases: entry.aliases };
+    }
+  }
+  const clean = String(raw || '').trim().slice(0, 80);
+  return { full: clean || 'sujet précisé par l’utilisateur', aliases: [] };
+}
+
+function blankConversationState() {
+  return {
+    jurisdiction: "Côte d'Ivoire",
+    legal_domain: 'Fiscalité',
+    topic: null,
+    topic_aliases: [],
+    tax_regime: 'RSI',
+    tax_year: 2026,
+    user_intent: null,
+    conversation_stage: 'new',
+    previous_question: null,
+    user_correction: null,
+    active_document: 'CGI 2026',
+    requires_source_verification: true,
+    entities: [],
+    corrections: [],
+    history: [],
+    updatedAt: Date.now(),
+  };
+}
+
+// --- Stockage des sessions : Firestore, repli mémoire volatile ---------------
+const memorySessions = new Map();
+let firestoreDb = null;
+let firestoreTried = false;
+
+function getFirestore() {
+  if (firestoreDb || firestoreTried) return firestoreDb;
+  firestoreTried = true;
+  try {
+    const admin = require('firebase-admin');
+    if (admin.apps.length === 0) admin.initializeApp();
+    firestoreDb = admin.firestore();
+  } catch (e) {
+    console.warn('[context] Firestore indisponible, mémoire volatile : ' + (e && e.message ? e.message : e));
+    firestoreDb = null;
+  }
+  return firestoreDb;
+}
+
+async function getSession(phone) {
+  const key = phone || 'unknown';
+  const now = Date.now();
+  const mem = memorySessions.get(key);
+  if (mem && now - mem.updatedAt < SESSION_TTL_MS) return mem;
+  const db = getFirestore();
+  if (db) {
+    try {
+      const snap = await db.collection('whatsapp_sessions').doc(key).get();
+      if (snap.exists) {
+        const data = snap.data() || {};
+        if (data && now - (data.updatedAt || 0) < SESSION_TTL_MS) {
+          memorySessions.set(key, data);
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('[context] lecture session impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+  const fresh = blankConversationState();
+  memorySessions.set(key, fresh);
+  return fresh;
+}
+
+async function saveSession(phone, state) {
+  const key = phone || 'unknown';
+  state.updatedAt = Date.now();
+  memorySessions.set(key, state);
+  const db = getFirestore();
+  if (db) {
+    try {
+      await db.collection('whatsapp_sessions').doc(key).set(state);
+    } catch (e) {
+      console.warn('[context] sauvegarde session impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+}
+
+/** Met à jour l'état (jamais remplacé) à partir du nouveau message. */
+function updateConversationState(state, text) {
+  const norm = normalizeQuery(text);
+  const intent = detectIntent(norm);
+  const acronyms = detectAcronyms(text, norm);
+  const correction = isCorrectionMessage(text);
+
+  state.history.push({ role: 'user', text: String(text).slice(0, 500), at: Date.now() });
+  if (state.history.length > HISTORY_MAX) state.history = state.history.slice(-HISTORY_MAX);
+
+  if (correction) {
+    const extracted = extractCorrectionTopic(text);
+    const prevTopic = state.topic;
+    if (extracted) {
+      const canon = canonicalizeConcept(extracted);
+      state.topic = canon.full;
+      state.topic_aliases = canon.aliases;
+    }
+    state.user_correction = String(text).slice(0, 300);
+    state.conversation_stage = 'clarified';
+    if (intent.id !== 'EXPLAIN') state.user_intent = intent.id;
+    state.corrections.push({
+      error: prevTopic ? '« ' + prevTopic + ' » mal interprété' : 'interprétation initiale contestée',
+      fix: state.topic || extracted || 'précision utilisateur',
+      at: Date.now(),
+      priority: 'tres_elevee',
+    });
+    if (state.corrections.length > 5) state.corrections = state.corrections.slice(-5);
+    return { intent, acronyms, isCorrection: true };
+  }
+
+  if (acronyms.length > 0) {
+    if (!state.topic) {
+      state.topic = acronyms[0].full;
+      state.topic_aliases = acronyms[0].aliases;
+    }
+    for (const a of acronyms) {
+      if (!state.entities.includes(a.code)) state.entities.push(a.code);
+    }
+  }
+  // Continuité : sans intention détectée, on conserve l'intention en cours.
+  if (intent.id !== 'EXPLAIN') state.user_intent = intent.id;
+  if (isQuestionLike(text)) state.previous_question = String(text).slice(0, 300);
+  if (state.conversation_stage === 'new') state.conversation_stage = 'ongoing';
+  return { intent, acronyms, isCorrection: false };
+}
+
+/** Acronyme nu sans intention : on demande au lieu d'inventer. */
+function needsClarification(upd, text) {
+  if (upd.isCorrection) return false;
+  if (upd.intent.score > 0) return false;
+  if (upd.acronyms.length === 0) return false;
+  const words = normalizeQuery(text).split(/\s+/).filter(Boolean);
+  return words.length <= 6;
+}
+
+function buildClarificationReply(upd) {
+  const options = upd.acronyms.map((a) => '« ' + a.code + ' » = ' + a.full).join(' ; ');
+  return (
+    'Pour être sûr de bien vous répondre : par ' + options + ' ?\n' +
+    'Précisez aussi ce que vous voulez savoir : l’échéance, le calcul, les conditions ou les pénalités.'
+  );
+}
+
+/** Requête de recherche enrichie : question + sujet conservé + intention. */
+function expandQueryForRetrieval(question, state, upd) {
+  const parts = [question];
+  if (state.topic) parts.push(state.topic);
+  for (const a of upd.acronyms) parts.push(a.full);
+  const intentDef = INTENTS.find((i) => i.id === (upd.intent.id !== 'EXPLAIN' ? upd.intent.id : state.user_intent));
+  if (intentDef && intentDef.hints) parts.push(intentDef.hints);
+  return parts.join(' ').slice(0, 1000);
+}
+
+function intentLabel(id) {
+  const labels = {
+    PAYMENT_DEADLINE: 'échéance de paiement', RATE: 'taux applicable', CALCULATION: 'calcul',
+    ELIGIBILITY: 'éligibilité', EXEMPTION: 'exonération', PENALTY: 'pénalités',
+    DECLARATION: 'déclaration', PROCEDURE: 'démarche pas-à-pas', LEGAL_BASIS: 'base légale',
+    DOCUMENTS_REQUIRED: 'documents requis', GREETING: 'salutation', EXPLAIN: 'explication',
+  };
+  return labels[id] || 'explication';
+}
+
+/** Bloc injecté dans chaque appel LLM : l'état fait foi, pas la devinette. */
+function buildConversationContext(state) {
+  const lines = [
+    '### CONTEXTE CONVERSATIONNEL ACTIF (mémoire de session — prioritaire sur toute supposition) :',
+    '- Sujet : ' + (state.topic || 'non encore établi') +
+      (state.topic_aliases && state.topic_aliases.length ? ' (alias : ' + state.topic_aliases.slice(0, 3).join(', ') + ')' : ''),
+    '- Juridiction : ' + state.jurisdiction + ' | Année fiscale : ' + (state.tax_year || 2026) + ' | Régime : ' + (state.tax_regime || 'RSI'),
+    '- Intention : ' + intentLabel(state.user_intent || 'EXPLAIN'),
+  ];
+  if (state.previous_question) lines.push('- Question initiale conservée : « ' + state.previous_question + ' »');
+  const lastCorrection = state.corrections.length ? state.corrections[state.corrections.length - 1] : null;
+  if (lastCorrection) {
+    lines.push('- DERNIÈRE CORRECTION (priorité TRÈS ÉLEVÉE) : ' + lastCorrection.error + ' → retenir : ' + lastCorrection.fix + '.');
+    lines.push('- INTERDIT de revenir au sujet corrigé. Accuser la correction en UNE phrase, puis répondre à la question conservée.');
+  }
+  const pastUser = state.history.filter((h) => h.role === 'user').slice(-3, -1).map((h) => h.text);
+  if (pastUser.length) lines.push('- Échanges précédents : ' + pastUser.map((t) => '« ' + t.slice(0, 120) + ' »').join(' / '));
+  const factual = state.user_intent === 'PAYMENT_DEADLINE' || state.user_intent === 'RATE';
+  lines.push(
+    factual
+      ? '- Question FACTUELLE : répondre D’ABORD par la règle en une phrase (échéance/taux + article), puis application RSI en 3-4 lignes, puis proposer le détail. Ne pas régurgiter la fiche complète.'
+      : '- Réponse WhatsApp concise (~1500 caractères max), en français clair, avec sources citées.'
+  );
+  return lines.join('\n');
+}
+
 function buildSystemPrompt(dossierContext, legalContextText) {
   return (
     "Tu es LEGAL FLOW AI, l'intelligence artificielle experte en conformité fiscale et droit des affaires pour la République de Côte d'Ivoire.\n" +
@@ -340,10 +694,17 @@ function buildSystemPrompt(dossierContext, legalContextText) {
   );
 }
 
-async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
+async function postChatCompletions(model, systemPrompt, userText, timeoutMs, history) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const messages = [{ role: 'system', content: systemPrompt }];
+    for (const h of history || []) {
+      if (h && (h.role === 'user' || h.role === 'assistant') && h.content) {
+        messages.push({ role: h.role, content: String(h.content).slice(0, 1000) });
+      }
+    }
+    messages.push({ role: 'user', content: userText });
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -356,10 +717,7 @@ async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
         model,
         temperature: 0.3,
         max_tokens: OPENROUTER_MAX_TOKENS,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message },
-        ],
+        messages,
       }),
       signal: controller.signal,
     });
@@ -375,18 +733,18 @@ async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
 // Le roster gratuit OpenRouter tourne : si le modèle principal disparaît
 // (404), bascule automatique sur le routeur gratuit avant le repli local.
 // Le gratuit est limité (429) : un seul retry après 2 s avant le repli.
-async function callOpenRouter(systemPrompt, message) {
+async function callOpenRouter(systemPrompt, userText, history) {
   if (!OPENROUTER_API_KEY) return null;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
-    let res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, OPENROUTER_TIMEOUT_MS);
+    let res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, userText, OPENROUTER_TIMEOUT_MS, history);
     if (res.status === 404 && OPENROUTER_MODEL !== 'openrouter/free') {
       console.warn('[webhook] modèle ' + OPENROUTER_MODEL + ' introuvable (404), bascule openrouter/free.');
-      res = await postChatCompletions('openrouter/free', systemPrompt, message, OPENROUTER_TIMEOUT_MS);
+      res = await postChatCompletions('openrouter/free', systemPrompt, userText, OPENROUTER_TIMEOUT_MS, history);
     } else if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && !res.reply) {
       console.warn('[webhook] OpenRouter HTTP ' + res.status + ', nouvel essai dans 2 s.');
       await sleep(2000);
-      res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, OPENROUTER_TIMEOUT_MS);
+      res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, userText, OPENROUTER_TIMEOUT_MS, history);
     }
     if (!res.reply) {
       console.warn('[webhook] OpenRouter HTTP ' + res.status + ', repli local.');
@@ -403,6 +761,25 @@ async function callOpenRouter(systemPrompt, message) {
 function buildDeterministicExpertResponse(query, sources, dossierContext) {
   const match = detectTheme(query);
   void dossierContext;
+
+  // IMF : désambiguïsé d'office (Impôt Minimum Forfaitaire, jamais l'ITS).
+  // Sans extrait CGI vérifié sous la main : définition + question de cadrage,
+  // jamais d'article ni de taux inventé.
+  if (match.theme === 'imf') {
+    return `Oui, bien noté : vous parlez de l'**Impôt Minimum Forfaitaire (IMF)**, et non des retenues sur salaires (ITS).
+
+### Ce qu'est l'IMF
+- Impôt **plancher** dû par les entreprises relevant des régimes concernés en Côte d'Ivoire (CGI 2026, dispositions IMF).
+- Il est strictement distinct de l'ITS (Article 115 du CGI) qui concerne les salaires.
+
+### Pour vous répondre précisément
+Dites-moi ce que vous voulez savoir :
+1. **L'échéance** de déclaration et de paiement ?
+2. **Le calcul** (assiette, minimum applicable à votre régime) ?
+3. Les **pénalités** en cas de retard ?
+
+Précisez aussi votre régime (RSI, Réel Normal…) si différent, et je vous donne la règle avec l'article.`;
+  }
 
   if (match.theme === 'tva') {
     return `### 1. La règle essentielle
@@ -591,27 +968,73 @@ Retard : majoration **10%** + **1% par mois**. Contrôle : jusqu'à **50%**.
 Précisez votre question (TVA, CNPS, CMU, CGA, FDFP, embauche, douane, ARF) pour une fiche experte complète.`;
 }
 
-// --- Traitement du message avec l'IA Legal Flow ---
+// --- Traitement du message : pipeline Context Engine -------------------------
+// message → compréhension → mémoire de session → recherche juridique →
+// raisonnement LLM → réponse. Chaque tour met à jour l'état, jamais remplacé.
 async function processLegalFlowMessage(from, text) {
   const question = (text || '').slice(0, 1000);
-  const dossierContext = "Question reçue via WhatsApp du " + (from || 'client') + ". Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.";
+  const sender = from || 'unknown';
+  const dossierContext = "Question reçue via WhatsApp du " + sender + ". Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.";
+
+  const session = await getSession(sender);
+  const upd = updateConversationState(session, question);
+  console.log(
+    '[context] tour: intent=' + upd.intent.id + ' (score ' + upd.intent.score + ')' +
+    ' | topic=' + (session.topic || '—') +
+    ' | stage=' + session.conversation_stage +
+    (upd.isCorrection ? ' | CORRECTION' : '') +
+    ' | historique=' + session.history.length
+  );
+
+  const recordAssistant = async (replyText) => {
+    session.history.push({ role: 'assistant', text: String(replyText).slice(0, 500), at: Date.now() });
+    if (session.history.length > HISTORY_MAX) session.history = session.history.slice(-HISTORY_MAX);
+    await saveSession(sender, session);
+  };
+
   try {
-    const docs = await searchLegalDocuments(question, 6);
+    // Désambiguïsation : acronyme nu sans intention → on demande, on n'invente pas.
+    if (needsClarification(upd, question)) {
+      session.conversation_stage = 'awaiting_clarification';
+      const reply = buildClarificationReply(upd);
+      await recordAssistant(reply);
+      console.log('[context] clarification demandée (sujet=' + (upd.acronyms[0] ? upd.acronyms[0].code : '?') + ').');
+      return reply;
+    }
+
+    // Recherche juridique guidée par le sujet conservé + l'intention.
+    const retrievalQuery = expandQueryForRetrieval(question, session, upd);
+    const docs = await searchLegalDocuments(retrievalQuery, 6);
     const legalContextText = (docs || [])
       .map(
         (doc, i) =>
           '[Extrait ' + (i + 1) + '] Source: ' + doc.source_fichier + ' | Réf: ' + doc.reference_article + ' (Similarité: ' + Math.round(doc.similarity * 100) + '%)\nTexte: ' + doc.contenu
       )
       .join('\n\n');
-    const systemPrompt = buildSystemPrompt(dossierContext, legalContextText);
-    const reply = await callOpenRouter(systemPrompt, question);
-    if (reply) return String(reply).slice(0, 4000);
+    const systemPrompt =
+      buildSystemPrompt(dossierContext, legalContextText) + '\n' + buildConversationContext(session);
+    // Historique immédiat (sans le message courant, passé séparément).
+    const history = session.history
+      .slice(0, -1)
+      .slice(-HISTORY_FOR_LLM)
+      .map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.text }));
+
+    const reply = await callOpenRouter(systemPrompt, question, history);
+    if (reply) {
+      const finalReply = String(reply).slice(0, 4000);
+      await recordAssistant(finalReply);
+      return finalReply;
+    }
     console.warn('[webhook] OpenRouter sans réponse, repli déterministe local.');
-    return buildDeterministicExpertResponse(question, docs, dossierContext).slice(0, 4000);
+    const fallback = buildDeterministicExpertResponse(retrievalQuery, docs, dossierContext).slice(0, 4000);
+    await recordAssistant(fallback);
+    return fallback;
   } catch (error) {
     console.error('Erreur IA :', error && error.message ? error.message : error);
     try {
-      return buildDeterministicExpertResponse(question, searchLocalCorpus(question, 6), dossierContext).slice(0, 4000);
+      const fallback = buildDeterministicExpertResponse(question, searchLocalCorpus(question, 6), dossierContext).slice(0, 4000);
+      await recordAssistant(fallback);
+      return fallback;
     } catch {
       return "⚠️ Désolé, une erreur technique s'est produite. Veuillez réessayer.";
     }
@@ -736,7 +1159,12 @@ app.post('/webhook', async (req, res) => {
 });
 
 // Helpers exposés pour tests locaux (node) — sans effet en production.
-exports.__test__ = { detectTheme, buildDeterministicExpertResponse, searchLocalCorpus, normalizeQuery };
+exports.__test__ = {
+  detectTheme, buildDeterministicExpertResponse, searchLocalCorpus, normalizeQuery,
+  detectIntent, detectAcronyms, isCorrectionMessage, extractCorrectionTopic,
+  blankConversationState, updateConversationState, needsClarification,
+  buildClarificationReply, expandQueryForRetrieval, buildConversationContext,
+};
 
 // Exposer la fonction (URL : https://[REGION]-legalflowio.cloudfunctions.net/whatsappWebhook/webhook)
 exports.whatsappWebhook = functions.https.onRequest(app);
