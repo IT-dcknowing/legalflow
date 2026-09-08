@@ -1,0 +1,14 @@
+{
+  "name": "legalflow-whatsapp",
+  "description": "Webhook WhatsApp Business pour Legal Flow (vérification Meta, réception, réponse IA).",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.21.2",
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^5.1.1"
+  },
+  "private": true
+}

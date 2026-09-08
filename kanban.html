@@ -1756,6 +1756,31 @@ create policy preuves_select on storage.objects for select using (bucket_id = 'p
     ],
     notes: 'Le moteur lit secteurActivite (repli secteur) : les 2 champs sont écrits ensemble.',
     historique: ['2026-09-06 : créé (retours QA).', '2026-09-06 : TERMINÉ, déployé.']
+  },
+  {
+    id: 'PEN-043', state: 'pending', priority: 'haute',
+    title: 'Webhook WhatsApp : deploy Cloud Functions + config Meta (prod +225 05 74 52 90 52)',
+    created: '2026-09-06', updated: '2026-09-06',
+    tags: ['whatsapp', 'firebase-functions', 'meta', 'prod'],
+    depends_on: [],
+    objectif: 'Mettre en ligne le webhook WhatsApp (vérification Meta, réception signée, réponse IA) sur le numéro prod.',
+    contexte: 'Code écrit et testé en émulateur (GET 200/challenge, GET faux 403, POST sans/mauvaise signature 401, bonne signature 200). Deploy bloqué : plan Blaze requis.',
+    etapes: [
+      'FAIT : functions/ (index.js vérif + signature HMAC + parse + réponse IA + envoi), firebase.json functions nodejs20, .env.example (prod IDs).',
+      'FAIT : trous trouvés et bouchés (admin.initializeApp bloquait le cold start ; secret test retiré du .env prod).',
+      'À FAIRE (utilisateur) : passer legalflowio en plan Blaze (console Firebase → Usage).',
+      'À FAIRE (utilisateur, interactif) : firebase functions:secrets:set WHATSAPP_ACCESS_TOKEN + WHATSAPP_APP_SECRET.',
+      'Dev : firebase deploy --only functions → récupérer la vraie Callback URL.',
+      'Utilisateur : Meta dashboard → Callback URL + KeySoc26 + subscribe messages + token permanent.',
+      'Tester : message réel vers +225 05 74 52 90 52, vérifier réponse + logs.'
+    ],
+    criteres: [
+      'Callback URL Meta verte (vérification OK).',
+      'Message réel → réponse IA Legal Flow sur WhatsApp.',
+      'Signature rejetée sans secret valide (401).',
+    ],
+    notes: 'Numéro prod actif. Templates + paiement Meta à prévoir pour messages hors fenêtre 24h (Prompt 4). functions/.env jamais commité (gitignoré, vérifié).',
+    historique: ['2026-09-06 : créé (Prompts 1-4 webhook). Code + tests émulateur OK, deploy bloqué Blaze.']
   }
 ];
 
