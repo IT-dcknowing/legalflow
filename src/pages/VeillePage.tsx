@@ -16,17 +16,22 @@ import {
   Sparkles,
   CheckSquare,
 } from 'lucide-react';
-import { PageId, FlashVeille } from '../types';
+import { PageId, FlashVeille, VeilleNote } from '../types';
 import { initialFlashs } from '../data/mockData';
+import { markVeilleRead, veillePublicUrl } from '../services/notifications';
 
 interface VeillePageProps {
   onNavigate?: (page: PageId) => void;
   flashs?: FlashVeille[];
+  notes?: VeilleNote[];
+  userId?: string | null;
 }
 
 export const VeillePage: React.FC<VeillePageProps> = ({
   onNavigate,
   flashs = initialFlashs,
+  notes = [],
+  userId,
 }) => {
   const [scopeFilter, setScopeFilter] = useState<'dossier' | 'all'>('dossier');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -62,6 +67,12 @@ export const VeillePage: React.FC<VeillePageProps> = ({
 
   const toggleExpand = (id: string) => {
     setExpandedCardId((prev) => (prev === id ? null : id));
+  };
+
+  // CDC §3.3 : marqué "lu" au clic sur le détail (pas au survol).
+  const openNote = (note: VeilleNote) => {
+    toggleExpand(`note-${note.id}`);
+    markVeilleRead(note.id, userId).catch(() => undefined);
   };
 
   return (
@@ -127,6 +138,67 @@ export const VeillePage: React.FC<VeillePageProps> = ({
           );
         })}
       </div>
+
+      {/* 3a. Notes officielles (Super Admin, CDC §3) */}
+      {notes.length > 0 && (
+        <div className="space-y-3">
+          <div className="text-xs font-black uppercase tracking-wider text-[#3D3680] px-1">
+            Notes officielles ({notes.length})
+          </div>
+          {notes.map((note) => {
+            const isExpanded = expandedCardId === `note-${note.id}`;
+            return (
+              <div
+                key={note.id}
+                className="bg-white border border-[#E5E5F0] rounded-2xl p-5 shadow-xs space-y-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {!note.lu && <span className="w-2 h-2 rounded-full bg-[#4F46A0] shrink-0" />}
+                    <h3 className="text-sm font-black text-[#171A2E] m-0">{note.titre}</h3>
+                  </div>
+                  <span className="text-[11px] text-[#6B6F85]">
+                    {note.categorie} · {new Date(note.published_at || note.created_at).toLocaleDateString('fr-FR')}
+                  </span>
+                </div>
+                {isExpanded && (
+                  <div className="text-xs text-[#555870] leading-relaxed whitespace-pre-line">
+                    {note.contenu}
+                  </div>
+                )}
+                {isExpanded && note.pieces.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {note.pieces.map((p) => {
+                      const url = veillePublicUrl(p);
+                      return url ? (
+                        <a
+                          key={p}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-bold text-[#4F46A0] hover:underline inline-flex items-center gap-1"
+                        >
+                          <FileText className="w-3 h-3" /> {p.split('_').slice(1).join('_') || p}
+                        </a>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+                <button
+                  onClick={() => openNote(note)}
+                  className="text-xs font-bold text-[#4F46A0] hover:text-[#3D3680] transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  {isExpanded ? (
+                    <><ChevronUp className="w-4 h-4" /> Réduire</>
+                  ) : (
+                    <><ChevronDown className="w-4 h-4" /> Lire le détail</>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* 3. Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

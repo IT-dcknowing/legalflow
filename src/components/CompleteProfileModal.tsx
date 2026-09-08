@@ -9,6 +9,8 @@ interface CompleteProfileModalProps {
   onSaveProfile: (updatedProfile: CompanyProfile) => void;
   isManagerCompletingForClient?: boolean;
   clientCompanyName?: string;
+  /** CDC §4 : bloquant 1ère connexion + rappel tous les 2 jours (pas de fermeture). */
+  blocking?: boolean;
 }
 
 export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
@@ -18,7 +20,9 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
   onSaveProfile,
   isManagerCompletingForClient = false,
   clientCompanyName,
+  blocking = false,
 }) => {
+  const [raisonSociale, setRaisonSociale] = useState(currentProfile.raisonSociale || currentProfile.nom || '');
   const [formeJuridique, setFormeJuridique] = useState(currentProfile.formeJuridique || 'SARL');
   const [secteurActivite, setSecteurActivite] = useState(
     currentProfile.secteurActivite || currentProfile.secteur || 'BTP / Travaux publics'
@@ -35,9 +39,12 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
   const [numeroRccm, setNumeroRccm] = useState(currentProfile.rccm || 'CI-ABJ-2024-B-08891');
   const [numeroCnps, setNumeroCnps] = useState(currentProfile.numeroCnps || '225-IND-9912');
   const [adhesionCga, setAdhesionCga] = useState<boolean>(currentProfile.adhesionCga || false);
+  const [nomsSalaries, setNomsSalaries] = useState(currentProfile.nomsSalaries || '');
+  const [masseSalariale, setMasseSalariale] = useState<number>(currentProfile.masseSalariale || 0);
 
   useEffect(() => {
     if (isOpen) {
+      setRaisonSociale(currentProfile.raisonSociale || currentProfile.nom || '');
       setFormeJuridique(currentProfile.formeJuridique || 'SARL');
       setSecteurActivite(
         currentProfile.secteurActivite || currentProfile.secteur || 'BTP / Travaux publics'
@@ -50,19 +57,23 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
       setNumeroRccm(currentProfile.rccm || 'CI-ABJ-2024-B-08891');
       setNumeroCnps(currentProfile.numeroCnps || '225-IND-9912');
       setAdhesionCga(currentProfile.adhesionCga || false);
+      setNomsSalaries(currentProfile.nomsSalaries || '');
+      setMasseSalariale(currentProfile.masseSalariale || 0);
     }
   }, [isOpen, currentProfile]);
 
   if (!isOpen) return null;
 
-  // Validation des 5 champs requis par la spécification
+  // Validation : raison sociale + 5 critères + noms des salariés (CDC §4).
+  const isValidRaison = raisonSociale.trim().length > 0;
+  const isValidNoms = nomsSalaries.trim().length > 0;
   const isValidForme = formeJuridique.trim().length > 0;
   const isValidSecteur = secteurActivite.trim().length > 0;
   const isValidRegime = regimeFiscal.trim().length > 0;
   const isValidEffectif = effectifSalaries > 0;
   const isValidCa = caEstime > 0;
 
-  const isAllValid = isValidForme && isValidSecteur && isValidRegime && isValidEffectif && isValidCa;
+  const isAllValid = isValidRaison && isValidNoms && isValidForme && isValidSecteur && isValidRegime && isValidEffectif && isValidCa;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +81,10 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
 
     const updated: CompanyProfile = {
       ...currentProfile,
+      nom: raisonSociale,
+      raisonSociale,
+      nomsSalaries,
+      masseSalariale: masseSalariale > 0 ? masseSalariale : undefined,
       formeJuridique,
       secteur: secteurActivite,
       secteurActivite,
@@ -92,7 +107,7 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
     <div
       id="completeProfileModalOverlay"
       className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-      onClick={onClose}
+      onClick={blocking ? undefined : onClose}
     >
       <div
         id="completeProfileModalContent"
@@ -112,17 +127,21 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
                   : 'Finaliser le profil de votre entreprise'}
               </h2>
               <p className="text-xs text-[#64748B] m-0 mt-0.5">
-                Renseignez les 5 critères obligatoires pour débloquer le filtrage personnalisé.
+                {blocking
+                  ? 'Étape obligatoire : sans profil complet, les calculs restent génériques.'
+                  : 'Renseignez les 5 critères obligatoires pour débloquer le filtrage personnalisé.'}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="text-[#64748B] hover:text-[#1E293B] p-1 rounded-lg hover:bg-[#F1F5F9] transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!blocking && (
+            <button
+              onClick={onClose}
+              className="text-[#64748B] hover:text-[#1E293B] p-1 rounded-lg hover:bg-[#F1F5F9] transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Note informative */}
@@ -134,6 +153,22 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* 0. Raison sociale (CDC §4 : obligatoire) */}
+          <div>
+            <label className="block text-xs font-bold text-[#1E293B] mb-1">
+              Raison sociale <span className="text-[#DC2626]">*</span>
+            </label>
+            <input
+              id="fieldRaisonSociale"
+              type="text"
+              value={raisonSociale}
+              onChange={(e) => setRaisonSociale(e.target.value)}
+              className="w-full text-xs font-semibold p-2.5 bg-white border border-[#CBD5E1] rounded-lg focus:outline-none focus:border-[#4F46A0] focus:ring-1 focus:ring-[#4F46A0]"
+              placeholder="Ex : Établissements Koffi BTP SARL"
+              required
+            />
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* 1. Forme juridique */}
             <div>
@@ -261,8 +296,38 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
             </div>
           </div>
 
-          {/* Adhésion CGA */}
-          <div className="flex items-center gap-2 pt-1">
+          {/* 6. Noms des salariés (CDC §4 : obligatoire) + masse salariale (optionnelle) */}
+          <div>
+            <label className="block text-xs font-bold text-[#1E293B] mb-1">
+              6. Noms des salariés <span className="text-[#DC2626]">*</span>
+            </label>
+            <textarea
+              id="fieldNomsSalaries"
+              value={nomsSalaries}
+              onChange={(e) => setNomsSalaries(e.target.value)}
+              rows={2}
+              className="w-full text-xs font-semibold p-2.5 bg-white border border-[#CBD5E1] rounded-lg focus:outline-none focus:border-[#4F46A0] focus:ring-1 focus:ring-[#4F46A0]"
+              placeholder="Ex : Awa Koné, Yao Kouassi, Aminata Diarra…"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-[#1E293B] mb-1">
+              Masse salariale mensuelle brute (FCFA) <span className="text-[#64748B] font-semibold">— optionnel</span>
+            </label>
+            <input
+              id="fieldMasseSalariale"
+              type="number"
+              min="0"
+              step="10000"
+              value={masseSalariale || ''}
+              onChange={(e) => setMasseSalariale(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-full text-xs font-semibold p-2.5 bg-white border border-[#CBD5E1] rounded-lg focus:outline-none focus:border-[#4F46A0] focus:ring-1 focus:ring-[#4F46A0]"
+              placeholder="Ex : 2700000"
+            />
+          </div>
+
+          {/* Adhésion CGA */}          <div className="flex items-center gap-2 pt-1">
             <input
               type="checkbox"
               id="fieldAdhesionCga"
@@ -277,13 +342,15 @@ export const CompleteProfileModal: React.FC<CompleteProfileModalProps> = ({
 
           {/* Actions */}
           <div className="pt-4 border-t border-[#F1F5F9] flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-[#64748B] hover:text-[#1E293B] hover:bg-[#F1F5F9] rounded-lg transition-colors cursor-pointer"
-            >
-              Annuler
-            </button>
+            {!blocking && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-bold text-[#64748B] hover:text-[#1E293B] hover:bg-[#F1F5F9] rounded-lg transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+            )}
 
             <button
               id="btnSubmitCompleteProfile"

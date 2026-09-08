@@ -28,6 +28,7 @@ const COMPANY_PAGES: PageId[] = [
   'veille',
   'documents',
   'profil',
+  'parametres',
   'entreprise_historique',
 ];
 

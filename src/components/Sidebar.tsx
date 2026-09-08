@@ -168,6 +168,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Mon profil / Paramètres',
       icon: <Settings className="w-[18px] h-[18px]" />,
     },
+    {
+      id: 'parametres',
+      label: 'Notifications & WhatsApp',
+      icon: <Send className="w-[18px] h-[18px]" />,
+    },
   ];
 
   // 3. Navigation items for GESTIONNAIRE INSIDE A COMPANY OR STANDARD USER (Niveau 3)
@@ -230,6 +235,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'profil',
       label: role === 'gestionnaire' ? "Fiche de l'entreprise" : 'Profil',
       icon: <UserCheck className="w-[18px] h-[18px]" />,
+    },
+    {
+      id: 'parametres',
+      label: 'Paramètres',
+      icon: <Settings className="w-[18px] h-[18px]" />,
     },
     {
       id: 'entreprise_historique',

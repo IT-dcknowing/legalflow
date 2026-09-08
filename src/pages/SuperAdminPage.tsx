@@ -30,13 +30,16 @@ import {
   ExternalLink,
   ArrowRight,
   TrendingUp,
+  Newspaper,
 } from 'lucide-react';
+import { VeilleAdminPanel } from '../components/VeilleAdminPanel';
+import { publishNotification } from '../services/notifications';
 
 interface SuperAdminPageProps {
   companies: CompanyEntity[];
   onSelectCompanyAsAdmin: (companyId: string) => void;
   onNavigate: (page: PageId) => void;
-  initialTab?: 'stats' | 'entreprises' | 'pipeline' | 'notifications' | 'audits' | 'emails' | 'schema';
+  initialTab?: 'stats' | 'entreprises' | 'pipeline' | 'veille' | 'notifications' | 'audits' | 'emails' | 'schema';
 }
 
 export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
@@ -46,7 +49,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
   initialTab = 'stats',
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'stats' | 'entreprises' | 'pipeline' | 'notifications' | 'audits' | 'emails' | 'schema'
+    'stats' | 'entreprises' | 'pipeline' | 'veille' | 'notifications' | 'audits' | 'emails' | 'schema'
   >(initialTab);
 
   React.useEffect(() => {
@@ -111,6 +114,17 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
     };
 
     setNotifications([newNotif, ...notifications]);
+    // Persistance Supabase (table notifications) quand une session existe.
+    const uuidLike = /^[0-9a-f-]{36}$/i.test(newNotifEntrepriseId);
+    publishNotification(
+      {
+        titre: newNotif.titre,
+        contenu: newNotif.contenu,
+        type: newNotifType === 'general' ? 'generale' : newNotifType,
+        entreprise_id: newNotifCible === 'individuelle' && uuidLike ? newNotifEntrepriseId : null,
+      },
+      null
+    ).catch(() => undefined);
     setNewNotifTitre('');
     setNewNotifContenu('');
     setNotifSuccess(true);
@@ -167,6 +181,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
           { id: 'stats', label: 'Dashboard Global', icon: <TrendingUp className="w-3.5 h-3.5" /> },
           { id: 'entreprises', label: `Entreprises (${companies.length})`, icon: <Building2 className="w-3.5 h-3.5" /> },
           { id: 'pipeline', label: 'Pipeline Veille (J0→J+5)', icon: <Radio className="w-3.5 h-3.5" /> },
+          { id: 'veille', label: 'Notes & Maintenance', icon: <Newspaper className="w-3.5 h-3.5" /> },
           { id: 'notifications', label: 'Diffusion Notifications', icon: <Send className="w-3.5 h-3.5" /> },
           { id: 'audits', label: 'Audits Transversaux', icon: <FileCheck2 className="w-3.5 h-3.5" /> },
           { id: 'emails', label: 'Rappels J+3, J+7, J+15', icon: <Mail className="w-3.5 h-3.5" /> },
@@ -462,6 +477,9 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* TAB 4: NOTES DE VEILLE + MAINTENANCE (CDC §3, §6.4) */}
+      {activeTab === 'veille' && <VeilleAdminPanel userId={null} />}
 
       {/* TAB 4: DIFFUSION NOTIFICATIONS CIBLÉES */}
       {activeTab === 'notifications' && (

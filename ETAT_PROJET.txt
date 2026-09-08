@@ -1,0 +1,209 @@
+================================================================================
+LEGAL FLOW — ÉTAT COMPLET DU PROJET
+Date de génération : 08/09/2026
+Racine locale : C:\Users\alexm\DISQUE D - new gen\legal-flow
+================================================================================
+
+1. IDENTITÉ ET OBJECTIF
+--------------------------------------------------------------------------------
+LEGAL FLOW est une application web de conformité fiscale, sociale et juridique
+pour les entreprises ivoiriennes (DGI, CNPS, CMU/CNAM, FDFP, Code du Travail,
+OHADA/SYSCOHADA, Douanes UEMOA). Public : dirigeants, DAF, experts-comptables,
+cabinets de gestion.
+Promesse : centraliser impôts et taxes, anticiper les échéances avec pénalités,
+sécuriser l'entreprise face aux contrôles, révéler les optimisations (CGA, FDFP).
+Dossier de démonstration : entreprise BTP (Koffi BTP, Yopougon), régime RSI,
+masse salariale ~32,4M FCFA, 18 salariés.
+
+2. STACK TECHNIQUE
+--------------------------------------------------------------------------------
+- Frontend : React 19 + Vite 6 + TypeScript 5 + Tailwind CSS v4, lucide-react,
+  react-markdown (GFM + sanitize), motion, html2pdf.js.
+- Backend local/dev : Express 4 (server.ts) + tsx. Build : "vite build" (SPA
+  dans dist/) + esbuild de server.ts vers dist/server.cjs.
+- Base : Supabase (Postgres + Auth + Storage + pgvector). Client :
+  @supabase/supabase-js. Embeddings : @xenova/transformers
+  (paraphrase-multilingual-MiniLM-L12-v2, 384 dims).
+- LLM : OpenRouter (défaut web : minimax/minimax-m3:free ; WhatsApp :
+  dots-studio/dots-3-note-preview:free, voir §9) + circuit breaker opossum,
+  cache LRU, timeouts AbortController.
+- Hébergement : Firebase Hosting (site statique), Cloud Functions gen1
+  nodejs20 (webhook WhatsApp). Monitoring : /metrics (prom-client), logs Pino,
+  Sentry (si DSN), Firebase functions:log.
+- Sécurité : JWT (requireAuth), rate limit express-rate-limit, validation Zod,
+  RLS Supabase, HMAC Meta côté webhook, RGPD (export + suppression compte,
+  loi CI 2013-450).
+- Tests : Vitest (routeGuard, payrollTaxEngine, obligationEngine,
+  complianceScoreEngine). Lint : tsc --noEmit.
+
+3. ARCHITECTURE ET COMPORTEMENT GÉNÉRAL
+--------------------------------------------------------------------------------
+- SPA avec routagemaison (services/router.ts : pageToPath/pathToPage), URL
+  réelles, garde d'accès par rôle (services/routeGuard.ts, canAccess).
+- Amendement horloge unique : services/dateReference.ts (dateReference,
+  forçable en QA via initDateReferenceQaHook) pilote tout le pipeline.
+- Moteur d'obligations (services/obligationEngine.ts) + regroupement
+  échéancier 3 blocs + Historique (services/echeancier.ts). Résolution
+  roulante unique dans App.tsx : occurrences moteur + échéances libres.
+- Score de conformité (services/complianceScoreEngine.ts) : à jour / en
+  retard / J-6, pastilles par date (pillForDate), top-3 dashboard.
+- Moteurs paie/fiscalité (services/payrollTaxEngine.ts) : cotisations CNPS
+  (retraite 7,7/6,3 – familiales 5,75 – AT/MP BTP 4,00), ITS, FDFP 1,6 %.
+- Routeur de contexte IA (data/aiContextRouter.ts) : injecte échéances,
+  profil et opportunités dans le contexte du chat.
+- Données : mockData.ts + rolesData.ts en local ; Supabase quand configuré
+  (services/supabaseClient.ts : fetchMyProfile, fetchVisibleEntreprises,
+  logEvent, sanitizeFileName).
+- AUTH EN PAUSE : App.tsx AUTH_BYPASSED = true (ligne 181) ; session réelle
+  supprimée ; utilisateur démo via sélecteur de profil (ProfileSwitcher dans
+  Topbar). Réactivation = passer à false + restaurer le bloc session.
+- Rôles : super_admin, gestionnaire (+ mode « entrée entreprise »),
+  entreprise ; statuts : en_attente, suspendu. Pages de garde : EnAttente,
+  Suspendu, CabinetsEnAttente. Inscription : InscriptionPage +
+  inscriptionService.
+
+4. PAGES ET FONCTIONNALITÉS
+--------------------------------------------------------------------------------
+- LandingPage / AccueilPage : vitrine + promesse, CTA vers échéances.
+- DashboardPage : synthèse, top-3 priorités, score d'audit.
+- EcheancierPage : 3 blocs (en retard / à venir / historique), quittances
+  (logEvent quittance_pointee), ajout d'échéance libre (AddDeadlineModal).
+- OpportunitesPage : CGA, FDFP, seuils (motifs personnalisés type « CA à 95 %
+  du plafond RSI ») ; tiroir de simulation de coûts (CostSimulationDrawer) +
+  simulateur moteur (EngineSimulatorModal, lazy).
+- BibliothequePage : fiches guides (initialFiches) + lecture
+  (FicheReaderModal).
+- VeillePage : flashs réglementaires (initialFlashs), textes DGI/CNPS.
+- DocumentsPage : classeur documentaire, upload Storage bucket privé
+  « preuves » (noms assainis), preuves de quittances alimentant le score.
+- JournalPage : journal_evenements (logEvent) — traçabilité des actions.
+- ProfilPage : profil entreprise, secteur modifiable, complétude
+  (CompleteProfileModal, IncompleteProfileBanner, checkIsProfileComplete).
+- GestionnaireDashboardPage / GestionnaireEntreprisesPage : pilotage
+  multi-entreprises, CompanySelector, ConfirmEnterCompanyModal.
+- SuperAdminPage : diffusion Notifications Globales, gestion.
+- AddCompanyModal, ConfirmModal, ReportPdfModal (export PDF du rapport
+  d'audit via auditReportEngine : constats, J-7, relance), EngineSimulatorModal,
+  LaravelCodeViewerModal, Loader, DemoBadge, effets sonores (useSoundEffects).
+
+5. LOGIQUES MÉTIER CLÉS (valeurs légales codées)
+--------------------------------------------------------------------------------
+- TVA 18 %, déclaration mensuelle au plus tard le 20 (e-impots.gouv.ci) ;
+  retard : +10 % (Art. 160 LPF) + 1 %/mois.
+- ITS : retenue employeur reversée au plus tard le 15 ; récidive/retard > 30 j
+  : +25 %.
+- CNPS : déclaration/paiement au plus tard le 15 (e.cnps.ci) ; 10 % dès J1 +
+  1 %/mois ; DISA avant le 30 mars.
+- CMU : 1 000 FCFA/salarié/mois (500 + 500) ; quitus CNAM conditionne
+  l'attestation CNPS et les marchés publics.
+- CGA : abattement 20-25 % BIC ; perte si états financiers hors délai
+  (30 avril).
+- FDFP : 0,4 % apprentissage + 1,2 % formation continue ; tirage jusqu'à
+  0,6 % ; échéance le 15 (+10 %).
+- Seuils : Entreprenant ≤ 50M ; RME/RSI 50M–150M ; Réel Normal > 150M FCFA ;
+  bascule auto (2 exercices ou +10 %) ; notification avant le 1er février.
+- Code du Travail : CDD > 3 mois écrit ; immatriculation CNPS sous 8 jours ;
+  SMIG 75 000 FCFA ; amende 50 000–200 000 FCFA/travailleur non déclaré.
+- Douanes : BSC OIC obligatoire avant embarquement ; Sydonia/GUCE ; TEC,
+  TVA 18 %, PCS 0,8 % ; défaut BSC = 100 % du fret.
+- ARF : 3 mois de validité, blocage à la moindre déclaration en retard.
+- Contrôle : 10 % retard simple, 25-50 % taxation d'office/mauvaise foi.
+
+6. NOTIFICATIONS
+--------------------------------------------------------------------------------
+a) Notifications globales (in-app) :
+   - Tables Supabase : notifications + notifications_lues (schéma
+     supabaseSchema.sql + migrations), RLS : super admin gère, utilisateurs
+     lisent les ciblées. Type GlobalNotification (types/index.ts).
+   - Pages super_admin_notifications / admin_notifications ; diffusion depuis
+     SuperAdminPage ; mocks : mockGlobalNotifications (bienvenue, CGA,
+     profil incomplet).
+   - Topbar : compteur non lus (état local initial 3, remis à 0 à l'ouverture).
+b) Relances d'échéances : moteur de rapport (auditReportEngine) calcule
+   prochaine échéance + relance J-7 avec texte de notification
+   (relanceJ7NotificationText) ; pastilles J-6 et section en retard dans
+   l'échéancier.
+c) WhatsApp : accusés Meta (delivered/read) loggés ; envoi des réponses IA
+   via Graph API (voir §9). Pas de push navigateur ni SMS : les rappels sont
+   in-app + WhatsApp conversationnel.
+
+7. CHATBOT WEB (AssistantPanel / IAPanel)
+--------------------------------------------------------------------------------
+- IAPanel n'est qu'un alias d'AssistantPanel (panneau latéral + mode plein
+  écran, Markdown GFM sanitisé, effets sonores, citations RAG).
+- Fonctionnement : réponse d'abord locale (mots-clés échéances/TVA/retard/
+  pénalités via routeAiContext sur les données du dossier), sinon appel
+  POST /api/chat (serveur Express) ; persistance optionnelle remontée à App
+  vers chatbot_conversations (rechargée à la reconnexion).
+- Serveur /api/chat (server.ts, protégé JWT + rate limit + Zod) : recherche
+  RAG (pgvector match_documents, repli SQL ilike, repli corpus local),
+  prompt système anti-hallucination (interdiction d'inventer, citations
+  obligatoires, aveu de limite), appel OpenRouter via breaker, sinon réponse
+  experte déterministe (9 thèmes : tva, cnps, cmu, cga, seuil, fdfp,
+  embauche, douane, arf + réponse générique). Cache LRU + /api/rag/search.
+- État actuel : le chatbot web dépend du serveur Express LOCAL (:3000, non
+  déployé sur Firebase) ; en ligne (Hosting statique seul), seul le fallback
+  local du panneau répond.
+
+8. SUPABASE (base de données)
+--------------------------------------------------------------------------------
+- URL : https://zlyqtrzoqfssbleigaqe.supabase.co ; bucket privé « preuves ».
+- Tables : cabinets, entreprises, cabinet_entreprises, profiles,
+  chatbot_conversations, journal_evenements, documents_juridiques (RAG,
+  ~8005 documents, index HNSW, seuil match > 0,45), notifications,
+  notifications_lues.
+- Migrations 0001–0007 : connexion auth, fix récursion RLS, sécurité PEN-013,
+  inscription PEN-016, seuil match PEN-022, index PEN-029, wrapper Firebase.
+- RLS active partout ; policies par rôle ; service_role réservé au serveur.
+
+9. WHATSAPP (Cloud Function whatsappWebhook, us-central1, nodejs20)
+--------------------------------------------------------------------------------
+- URL prod : https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook
+  Callback Meta : .../whatsappWebhook/webhook | Verify Token : KeySoc26
+  Phone Number ID : 1336972212826885 | Numéro : +225 05 74 52 90 52.
+- GET /webhook : vérification Meta (200 + challenge ; vérifié OK).
+- POST /webhook : vérifie HMAC X-Hub-Signature-256 (401 si invalide ; 200
+  permanent vers Meta anti-retry), parse entry/changes/messages, log statuts,
+  ne traite que le texte.
+- Moteur IA embarqué (functions/index.js) : recherche Supabase REST
+  (ilike, repli corpus local 11 textes certifiés) → prompt système strict →
+  LLM OpenRouter → repli déterministe (9 fiches + générique).
+- Modèle actuel : dots-studio/dots-3-note-preview:free (vérifié 200 + réponse
+  LLM OK en prod le 08/09). Timeouts 25 s, 900 tokens, retry 429, bascule
+  auto openrouter/free si 404 (le roster gratuit tourne : minimax-m3,
+  glm-4.5-air, gpt-oss-20b devenus payants ; gemma-4-31b souvent 429 ;
+  nemotron safety = réponse vide ; minimax-m2.7 = payant).
+- Limites : gratuit OpenRouter capricieux (50 req/j, 429) ; 10 $ de crédits
+  conseillés (1 000 req/j). Pas de mémoire entre messages (stateless).
+- Secrets (functions/.env, gitignoré, jamais commités) : VERIFY_TOKEN,
+  WHATSAPP_APP_SECRET, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN
+  (permanent), META_API_VERSION, SUPABASE_URL/ANON_KEY, OPENROUTER_API_KEY,
+  OPENROUTER_MODEL/TIMEOUT/MAX_TOKENS, OPENCODE_ZEN_API_KEY (réserve ; le
+  gratuit Zen est verrouillé à OpenCode : « free tier can only be used in
+  OpenCode »).
+- IAM : allUsers invocateur (corrigeait le 403 initial).
+
+10. DÉPLOIEMENTS ET DÉPÔTS
+--------------------------------------------------------------------------------
+- Firebase projet legalflowio : Hosting https://legalflowio.web.app (live,
+  15 fichiers dist) + Functions whatsappWebhook (à jour, hash vérifié).
+  Dernier deploy complet : 08/09/2026 « Deploy complete! ».
+- GitHub : pushes vers debug → redirigé vers
+  https://github.com/IT-dcknowing/legalflow.git (dernier : b0fd44e).
+  origin (alexmardocheehunter/LEGAL-FLOW) inexistant (404).
+- Commits récents : b0fd44e (modèle dots), dcf8176 (gemma+retry),
+  72349e1 (portage RAG), e443439 (fix firebase-admin ^12).
+- Non commité : bruit .agents/skills (88 fichiers) + cache .firebase.
+
+11. POINTS D'ATTENTION / PROCHAINES ÉTAPES POSSIBLES
+--------------------------------------------------------------------------------
+- Réactiver l'auth réelle (AUTH_BYPASSED=false + bloc session).
+- Aligner server.ts sur le modèle gratuit valide (minimax-m3:free périmé).
+- Déployer le backend Express (chat web réel en ligne) ou le porter en
+  Function ; ajouter la mémoire de conversation WhatsApp (Firestore).
+- Crédits OpenRouter ($10) pour fiabiliser les quotas ; rotation des secrets
+  ayant transité en clair (token WhatsApp, clé Zen) ; recréer/nettoyer origin.
+- Relances proactives J-7 par WhatsApp (cron) au lieu du seul conversationnel.
+================================================================================
+FIN DU FICHIER
+================================================================================

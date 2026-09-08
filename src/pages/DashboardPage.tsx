@@ -12,7 +12,7 @@ import {
   ChevronUp,
   FileText,
 } from 'lucide-react';
-import { Obligation, PageId, CompanyProfile, OpportunityItem, FlashVeille } from '../types';
+import { Obligation, PageId, CompanyProfile, OpportunityItem, FlashVeille, VeilleNote } from '../types';
 import { groupObligations, selectAlertesUrgentes, joursRetardOf } from '../services/echeancier';
 import { initialCompany, initialOpportunities, initialFlashs } from '../data/mockData';
 import { IncompleteProfileBanner } from '../components/IncompleteProfileBanner';
@@ -23,6 +23,7 @@ interface DashboardPageProps {
   companyProfile?: CompanyProfile;
   opportunities?: OpportunityItem[];
   flashs?: FlashVeille[];
+  veilleNotes?: VeilleNote[];
   onOpenConfirmModal: (obligation: Obligation) => void;
   onNavigate: (page: PageId) => void;
   onOpenAssistant: () => void;
@@ -38,6 +39,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   companyProfile = initialCompany,
   opportunities = initialOpportunities,
   flashs = initialFlashs,
+  veilleNotes = [],
   onOpenConfirmModal,
   onNavigate,
   onOpenAssistant,
@@ -651,6 +653,40 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           Interroger LEGAL FLOW AI
         </button>
       </div>
+
+      {/* 6. Veille officielle : 3 notes max + lien (CDC §3.3) */}
+      {veilleNotes.length > 0 && (
+        <div className="border border-[#E2E8F0] bg-white rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-black text-[#1E293B] uppercase tracking-wider">
+              Veille officielle
+            </div>
+            <button
+              onClick={() => onNavigate('veille')}
+              className="text-xs font-bold text-[#4F46A0] hover:underline cursor-pointer inline-flex items-center gap-1"
+            >
+              Voir toute la veille <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="space-y-2">
+            {veilleNotes.slice(0, 3).map((n) => (
+              <button
+                key={n.id}
+                onClick={() => onNavigate('veille')}
+                className="w-full text-left bg-[#F8FAFC] border border-[#E2E8F0] hover:border-[#C7C4E8] rounded-xl p-3 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  {!n.lu && <span className="w-1.5 h-1.5 rounded-full bg-[#4F46A0] shrink-0" />}
+                  <span className="text-xs font-bold text-[#1E293B] line-clamp-1">{n.titre}</span>
+                </div>
+                <div className="text-[11px] text-[#64748B] mt-0.5">
+                  {n.categorie} · {new Date(n.published_at || n.created_at).toLocaleDateString('fr-FR')}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

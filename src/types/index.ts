@@ -18,6 +18,7 @@ export type PageId =
   | 'veille'
   | 'documents'
   | 'profil'
+  | 'parametres'
   // Super Admin Pages (Niveau 1)
   | 'super_admin'
   | 'super_admin_entreprises'
@@ -71,6 +72,8 @@ export interface CompanyProfile {
   chiffreAffairesEstime: number;
   salariesCmuAffilies: number;
   masseSalarialeAnnuelle: number;
+  nomsSalaries?: string;
+  masseSalariale?: number;
   profilComplet?: boolean;
   secteurGeographique?: string;
   createdBy?: string;
@@ -295,3 +298,55 @@ export interface ChatMessage {
   model?: string;
   contextSlices?: string[];
 }
+
+// --- Cahier des charges UX & Notifications ---------------------------------
+
+/** Notification in-app (table public.notifications). */
+export interface DbNotification {
+  id: string;
+  titre: string;
+  contenu: string;
+  type: 'generale' | 'alerte' | 'rappel' | 'information' | 'mise_a_jour' | 'veille' | 'opportunite';
+  criticite: 'basse' | 'moyenne' | 'haute' | 'critique';
+  cible: 'tous' | 'entreprise';
+  entreprise_id?: string | null;
+  date_envoi: string;
+  lu?: boolean;
+}
+
+/** Préférences désactivables (les critiques ne le sont jamais). */
+export interface NotificationPreferences {
+  user_id?: string;
+  veille: boolean;
+  opportunites: boolean;
+  maj_app: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  veille: true,
+  opportunites: true,
+  maj_app: true,
+};
+
+/** Note de veille réglementaire (table public.veille_notes). */
+export interface VeilleNote {
+  id: string;
+  titre: string;
+  contenu: string;
+  categorie: string;
+  statut: 'brouillon' | 'publie' | 'archive';
+  is_global_broadcast: boolean;
+  pieces: string[];
+  published_at?: string | null;
+  created_at: string;
+  lu?: boolean;
+}
+
+/** Bandeau maintenance (clé maintenance_banner de app_settings). */
+export interface MaintenanceBannerState {
+  active: boolean;
+  message: string;
+}
+
+/** Canaux de diffusion par criticité (CDC §2.1). */
+export type Criticite = 'basse' | 'moyenne' | 'haute' | 'critique';

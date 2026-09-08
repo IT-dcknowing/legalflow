@@ -649,6 +649,56 @@ async function sendWhatsAppMessage(to, text) {
   return data;
 }
 
+// --- Opt-in WhatsApp (CDC §1) : message de bienvenue après inscription ---------
+const optinAttempts = new Map();
+function optinRateOk(ip) {
+  const now = Date.now();
+  const arr = (optinAttempts.get(ip) || []).filter((t) => now - t < 60000);
+  if (arr.length >= 5) return false;
+  arr.push(now);
+  optinAttempts.set(ip, arr);
+  return true;
+}
+
+function normalizeIvorianPhone(raw) {
+  return String(raw || '').replace(/[\s.\-()]/g, '');
+}
+function isValidIvorianPhone(raw) {
+  return /^\+2250[157]\d{8}$/.test(normalizeIvorianPhone(raw));
+}
+
+app.post('/optin', async (req, res) => {
+  const phone = normalizeIvorianPhone(req.body && req.body.phone);
+  if (!isValidIvorianPhone(phone)) {
+    return res.status(400).json({ error: 'Numéro ivoirien invalide (+225 0X XX XX XX XX).' });
+  }
+  const ip = String((req.headers['x-forwarded-for'] || req.ip || 'unknown')).split(',')[0].trim();
+  if (!optinRateOk(ip)) {
+    return res.status(429).json({ error: 'Trop de tentatives, réessayez dans une minute.' });
+  }
+  const sent = await sendWhatsAppMessage(
+    phone,
+    'Bienvenue sur Legal Flow CI ! Vos alertes WhatsApp sont activées : échéances J-1, retards et urgences (8h-18h GMT). Modifiez votre numéro à tout moment dans Paramètres.'
+  );
+  if (!sent) return res.status(502).json({ error: "Envoi WhatsApp impossible pour le moment." });
+  return res.json({ ok: true });
+});
+
+// --- Relais de diffusion (digests, urgences) : usage serveur/cron uniquement ---
+// Protégé par jeton applicatif (même VERIFY_TOKEN). Ne jamais appeler depuis le web.
+app.post('/notify', async (req, res) => {
+  const token = req.headers['x-notify-token'] || '';
+  if (!VERIFY_TOKEN || token !== VERIFY_TOKEN) return res.sendStatus(403);
+  const phone = normalizeIvorianPhone(req.body && req.body.phone);
+  const text = String((req.body && req.body.text) || '').slice(0, 4000);
+  if (!isValidIvorianPhone(phone) || !text) {
+    return res.status(400).json({ error: 'phone (CI) et text requis.' });
+  }
+  const sent = await sendWhatsAppMessage(phone, text);
+  if (!sent) return res.status(502).json({ error: 'Envoi impossible.' });
+  return res.json({ ok: true });
+});
+
 // --- Réception des messages (POST) ---
 app.post('/webhook', async (req, res) => {
   if (!signatureValide(req)) {

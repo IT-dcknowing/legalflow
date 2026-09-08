@@ -22,6 +22,7 @@ const PATHS: Array<[PageId, string]> = [
   ['veille', '/veille'],
   ['documents', '/documents'],
   ['profil', '/profil'],
+  ['parametres', '/parametres'],
   ['entreprise_historique', '/historique'],
   ['super_admin', '/admin'],
   ['super_admin_entreprises', '/admin/entreprises'],

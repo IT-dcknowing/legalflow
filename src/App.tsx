@@ -59,6 +59,24 @@ const ReportPdfModal = React.lazy(() =>
   import('./components/ReportPdfModal').then((m) => ({ default: m.ReportPdfModal }))
 );
 import { LaravelCodeViewerModal } from './components/LaravelCodeViewerModal';
+import { ToastHost, toast } from './components/Toast';
+import { WhatsappOptinModal } from './components/WhatsappOptinModal';
+import { MaintenanceBanner } from './components/MaintenanceBanner';
+import type { MaintenanceBannerState, NotificationPreferences, VeilleNote } from './types';
+import { DEFAULT_NOTIFICATION_PREFERENCES } from './types';
+import type { WhatsappState } from './services/notifications';
+import {
+  countUnread,
+  markAllRead,
+  fetchVeilleNotes,
+  getPreferences,
+  savePreferences,
+  getMaintenanceBanner,
+  getWhatsappState,
+  saveWhatsappOptin,
+  clearWhatsappOptin,
+  incrementPopupDismissals,
+} from './services/notifications';
 import { CompleteProfileModal } from './components/CompleteProfileModal';
 import { AddCompanyModal } from './components/AddCompanyModal';
 import { ConfirmEnterCompanyModal } from './components/ConfirmEnterCompanyModal';
@@ -79,6 +97,7 @@ import { BibliothequePage } from './pages/BibliothequePage';
 import { VeillePage } from './pages/VeillePage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { ProfilPage } from './pages/ProfilPage';
+import { ParametresPage } from './pages/ParametresPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { GestionnaireDashboardPage } from './pages/GestionnaireDashboardPage';
 import { GestionnaireEntreprisesPage } from './pages/GestionnaireEntreprisesPage';
@@ -171,6 +190,19 @@ export function App() {
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isLaravelViewerOpen, setIsLaravelViewerOpen] = useState(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState(3);
+
+  // ---- CDC UX & Notifications ----
+  const [whatsapp, setWhatsapp] = useState<WhatsappState>({ number: null, optinAt: null, dismissals: 0 });
+  const [isOptinOpen, setIsOptinOpen] = useState(false);
+  const [prefs, setPrefs] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
+  const [maintenance, setMaintenance] = useState<MaintenanceBannerState>({ active: false, message: '' });
+  const [isBlockingProfileOpen, setIsBlockingProfileOpen] = useState(false);
+  const [veilleNotes, setVeilleNotes] = useState<VeilleNote[]>([]);
+  const [veilleAll, setVeilleAll] = useState<VeilleNote[]>([]);
+
+  /** Pages de consultation : le pop-up WhatsApp ne coupe jamais une action. */
+  const isOptinEligiblePage = (page: PageId): boolean =>
+    page === 'accueil' || page === 'dashboard' || page === 'veille' || page === 'opportunites' || page === 'bibliotheque';
 
   // ---- AUTH MISE EN PAUSE (décision produit 2026-09-06) ----
   // Pas de session, pas de tokens, pas d'OAuth. Login/Signup redirigent
@@ -376,6 +408,7 @@ export function App() {
     veille: 'Veille réglementaire',
     documents: 'Documents',
     profil: currentRole === 'gestionnaire' && isGestionnaireInCompanyMode ? "Fiche de l'entreprise" : 'Profil entreprise',
+    parametres: 'Paramètres',
     entreprise_historique: 'Mon historique',
     super_admin: 'Dashboard Global — Super Admin HQ',
     super_admin_entreprises: 'Entreprises Référencées',
@@ -503,6 +536,7 @@ export function App() {
       ref: quittanceRef,
       fichier: storedPath,
     });
+    toast('Quittance enregistrée');
 
     // If a document was attached, add to documents list
     if (fileName) {
@@ -564,6 +598,7 @@ export function App() {
       },
       ...prev,
     ]);
+    toast('Échéance ajoutée');
   };
 
   const handleNavigate = (page: PageId | string) => {
@@ -607,6 +642,48 @@ export function App() {
     setIsAssistantFull(!isAssistantFull);
   };
 
+  // ---- CDC UX §1 : opt-in WhatsApp -------------------------------------------
+  const WHATSAPP_FUNCTIONS_BASE =
+    'https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook';
+
+  const sendWhatsappWelcome = async (phone: string): Promise<void> => {
+    try {
+      await fetch(`${WHATSAPP_FUNCTIONS_BASE}/optin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+    } catch {
+      /* le rappel reste actif même si le message de bienvenue échoue */
+    }
+  };
+
+  const handleWhatsappOptin = async (phone: string): Promise<void> => {
+    await saveWhatsappOptin(phone, authUserId);
+    setWhatsapp({ number: phone, optinAt: new Date().toISOString(), dismissals: 0 });
+    setIsOptinOpen(false);
+    toast('Alertes WhatsApp activées');
+    await sendWhatsappWelcome(phone);
+  };
+
+  const handleWhatsappDismiss = async (): Promise<void> => {
+    setIsOptinOpen(false);
+    const dismissals = await incrementPopupDismissals(authUserId);
+    setWhatsapp((prev) => ({ ...prev, dismissals }));
+  };
+
+  const handleWhatsappOptout = async (): Promise<void> => {
+    await clearWhatsappOptin(authUserId);
+    setWhatsapp((prev) => ({ ...prev, number: null, optinAt: null }));
+    toast('Alertes WhatsApp désactivées', 'info');
+  };
+
+  const handleSavePrefs = async (next: NotificationPreferences): Promise<void> => {
+    setPrefs(next);
+    await savePreferences(next, authUserId);
+    toast('Préférences enregistrées');
+  };
+
   // Sync URL ← état (redirects/gardes : replace, pas d'entrée parasite) + titre onglet.
   // Écoute précédent/suivant : popstate → état.
   React.useEffect(() => {
@@ -631,6 +708,60 @@ export function App() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  // ---- CDC UX : chargement prefs / WhatsApp / maintenance / compteur réel ----
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [p, w, m] = await Promise.all([
+        getPreferences(authUserId),
+        getWhatsappState(authUserId),
+        getMaintenanceBanner(),
+      ]);
+      if (cancelled) return;
+      setPrefs(p);
+      setWhatsapp(w);
+      setMaintenance(m);
+      try {
+        setUnreadNotifCount(await countUnread(authUserId));
+        setVeilleNotes(await fetchVeilleNotes(authUserId, { limit: 3, recentDays: 30 }));
+        setVeilleAll(await fetchVeilleNotes(authUserId));
+      } catch {
+        /* compteurs et notes par défaut conservés */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId, currentUser]);
+
+  // ---- CDC UX §1 : pop-up WhatsApp 30 s après arrivée sur page éligible ----
+  React.useEffect(() => {
+    if (!isOptinEligiblePage(activePage)) return;
+    if (whatsapp.number || whatsapp.dismissals >= 3) return;
+    const timer = setTimeout(() => {
+      setIsOptinOpen(true);
+    }, 30000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, whatsapp.number, whatsapp.dismissals]);
+
+  // ---- CDC UX §4 : profil bloquant 1ère connexion + rappel tous les 2 jours ----
+  React.useEffect(() => {
+    try {
+      if (checkIsProfileComplete(profile)) return;
+      const last = localStorage.getItem('lf_blocking_profile_last');
+      const now = Date.now();
+      if (!last || now - Number(last) > 2 * 86400000) {
+        setIsBlockingProfileOpen(true);
+        localStorage.setItem('lf_blocking_profile_last', String(now));
+      }
+    } catch {
+      /* stockage indisponible */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompanyId]);
 
   // Garde : DÉSACTIVÉE (auth en pause — pas de session à contrôler).
   // PEN-019 : matrice complète rôle × route + traçage acces_refuse.
@@ -743,6 +874,7 @@ export function App() {
           }`}
         >
           {/* Topbar */}
+          <MaintenanceBanner banner={maintenance} />
           <Topbar
             pageTitle={pageTitles[activePage] || 'Legal Flow'}
             dateReference={dateReference}
@@ -753,8 +885,11 @@ export function App() {
             onNavigateToVeille={() => {
               setActivePage('veille');
               setUnreadNotifCount(0);
+              markAllRead(authUserId);
             }}
             unreadCount={unreadNotifCount}
+            whatsappMuted={!whatsapp.number && whatsapp.dismissals >= 3}
+            onOpenParametres={() => setActivePage('parametres')}
             currentRole={currentRole}
             currentUser={currentUser}
             onSelectProfile={handleSelectProfile}
@@ -869,6 +1004,7 @@ export function App() {
                 companyProfile={profile}
                 opportunities={opportunities}
                 flashs={flashs}
+                veilleNotes={veilleNotes}
                 onOpenConfirmModal={(ob) => setConfirmModalObligation(ob)}
                 onNavigate={handleNavigate}
                 onOpenAssistant={() => setIsAssistantOpen(true)}
@@ -921,12 +1057,15 @@ export function App() {
               <BibliothequePage fiches={fiches} onOpenFiche={(f) => setSelectedFiche(f)} />
             )}
 
-            {activePage === 'veille' && <VeillePage onNavigate={setActivePage} flashs={flashs} />}
+            {activePage === 'veille' && <VeillePage onNavigate={setActivePage} flashs={flashs} notes={veilleAll} userId={authUserId} />}
 
             {activePage === 'documents' && (
               <DocumentsPage
                 documents={documents}
-                onUploadDocument={(doc) => setDocuments((prev) => [doc, ...prev])}
+                onUploadDocument={(doc) => {
+                  setDocuments((prev) => [doc, ...prev]);
+                  toast('Document uploadé');
+                }}
               />
             )}
 
@@ -938,6 +1077,20 @@ export function App() {
                 onOpenLaravelCode={() => setIsLaravelViewerOpen(true)}
                 onExportData={handleExportData}
                 onDeleteAccount={handleDeleteAccount}
+              />
+            )}
+
+            {activePage === 'parametres' && (
+              <ParametresPage
+                whatsappNumber={whatsapp.number}
+                whatsappOptinAt={whatsapp.optinAt}
+                whatsappMuted={!whatsapp.number && whatsapp.dismissals >= 3}
+                onOpenWhatsappOptin={() => {
+                              setIsOptinOpen(true);
+                }}
+                onWhatsappOptout={handleWhatsappOptout}
+                prefs={prefs}
+                onSavePrefs={handleSavePrefs}
               />
             )}
           </main>
@@ -986,6 +1139,24 @@ onMessagesChange={() => {}}
         isManagerCompletingForClient={currentRole === 'gestionnaire' && !!companyTargetForManager}
         clientCompanyName={companyTargetForManager?.name || profile.nom}
       />
+
+      {/* CDC §4 : profil bloquant 1ère connexion + rappel tous les 2 jours */}
+      <CompleteProfileModal
+        isOpen={isBlockingProfileOpen}
+        onClose={() => undefined}
+        currentProfile={profile}
+        onSaveProfile={(p) => {
+          handleSaveCompletedProfile(p);
+          setIsBlockingProfileOpen(false);
+          toast('Profil complété');
+        }}
+        blocking
+      />
+
+      {/* CDC §1 : pop-up opt-in WhatsApp (pages de consultation, 30 s) */}
+      {isOptinOpen && (
+        <WhatsappOptinModal onOptin={handleWhatsappOptin} onDismiss={handleWhatsappDismiss} />
+      )}
 
       {/* Add Company Modal (Niveau 2 Gestionnaire - Formulaire Complet) */}
       <AddCompanyModal
@@ -1051,6 +1222,9 @@ onMessagesChange={() => {}}
           onArchiveDocument={(doc) => setDocuments((prev) => [doc, ...prev])}
         />
       </React.Suspense>
+
+      {/* Toasts globaux (CDC §6.2) */}
+      <ToastHost />
     </div>
   );
 }

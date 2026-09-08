@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Menu, LogOut } from 'lucide-react';
+import { Bell, MessageSquare, Menu, LogOut, MessageCircle } from 'lucide-react';
 import { PageId, UserRole, AppUser } from '../types';
 import { LegalFlowLogo } from './LegalFlowLogo';
 import { ProfileSwitcher } from './ProfileSwitcher';
@@ -22,6 +22,9 @@ interface TopbarProps {
   currentRole?: UserRole;
   currentUser?: AppUser;
   onSelectProfile?: (userKey: string) => void;
+  /** CDC §1 : rappel discret après 3 fermetures du pop-up sans opt-in. */
+  whatsappMuted?: boolean;
+  onOpenParametres?: () => void;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -36,6 +39,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   currentRole = 'utilisateur',
   currentUser,
   onSelectProfile,
+  whatsappMuted = false,
+  onOpenParametres,
 }) => {
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -99,7 +104,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           id="notifBtn"
           onClick={() => setNotifOpen(!notifOpen)}
           aria-label="Notifications"
-          className="relative w-[36px] h-[36px] rounded-[8px] border border-[#E5E5F0] bg-white flex items-center justify-center hover:bg-[#F6F6FB] transition-colors"
+          className="relative w-[36px] h-[36px] rounded-[8px] border border-[#E5E5F0] bg-white flex items-center justify-center hover:bg-[#F6F6FB] transition-colors cursor-pointer"
         >
           <Bell className="w-[17px] h-[17px] text-[#20263A]" />
           {unreadCount > 0 && (
@@ -111,6 +116,20 @@ export const Topbar: React.FC<TopbarProps> = ({
             </span>
           )}
         </button>
+
+        {/* Rappel discret WhatsApp (CDC §1 : après 3 fermetures sans opt-in) */}
+        {whatsappMuted && onOpenParametres && (
+          <button
+            id="whatsappReminderBtn"
+            onClick={onOpenParametres}
+            title="Activer les alertes WhatsApp"
+            aria-label="Activer les alertes WhatsApp"
+            className="relative w-[36px] h-[36px] rounded-[8px] border border-[#E5E5F0] bg-white flex items-center justify-center hover:bg-[#F6F6FB] transition-colors cursor-pointer"
+          >
+            <MessageCircle className="w-[17px] h-[17px] text-[#1F9254]" />
+            <span className="absolute top-[7px] right-[7px] w-2 h-2 rounded-full bg-[#1F9254]" />
+          </button>
+        )}
 
         {/* Notification Dropdown Panel */}
         {notifOpen && (
