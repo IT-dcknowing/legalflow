@@ -1,19 +1,20 @@
 /**
- * Webhook WhatsApp Business — Legal Flow (Prompts 1 + 2).
+ * Webhook WhatsApp Business — Legal Flow (vraie IA RAG).
  *
  * GET  /webhook : vérification Meta (hub.mode / hub.verify_token / hub.challenge).
  * POST /webhook : valide X-Hub-Signature-256, parse les messages, répond via
- *                 l'IA Legal Flow (processLegalFlowMessage) + API WhatsApp.
+ *                 le moteur Legal Flow (RAG Supabase + OpenRouter, repli
+ *                 déterministe local) + API WhatsApp.
  *                 Répond TOUJOURS 200 OK à Meta (sinon retries).
  *
  * Secrets JAMAIS en dur : tout passe par l'environnement (.env local gitignoré,
- * variables déployées via `firebase functions:config` / Secret Manager, voir .env.example).
+ * variables déployées via `firebase deploy`, voir .env.example).
  */
 const functions = require('firebase-functions');
 const express = require('express');
 const crypto = require('crypto');
 // Note : firebase-admin sera initialisé quand on persistera l'historique
-// (Firestore, Prompt 2). Pas d'admin.initializeApp() ici : sans credentials,
+// (Firestore). Pas d'admin.initializeApp() ici : sans credentials,
 // il bloque le cold start en appelant le serveur de métadonnées Google.
 
 const app = express();
@@ -32,16 +33,20 @@ const WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET || '';
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || '';
 const META_API_VERSION = process.env.META_API_VERSION || 'v26.0';
-// Endpoint optionnel de l'IA Legal Flow (serveur Express /api/chat). Si absent,
-// processLegalFlowMessage utilise la réponse de test (Prompt 2, option 3).
-const LEGALFLOW_API_URL = process.env.LEGALFLOW_API_URL || '';
-const LEGALFLOW_API_TOKEN = process.env.LEGALFLOW_API_TOKEN || '';
+// Moteur IA : RAG Supabase (recherche plein-texte) + OpenRouter.
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
 
 if (!process.env.VERIFY_TOKEN) {
   console.warn('[webhook] VERIFY_TOKEN non défini : repli local KeySoc26 (dev uniquement).');
 }
 if (!WHATSAPP_APP_SECRET) {
   console.warn('[webhook] WHATSAPP_APP_SECRET non défini : signature NON vérifiée (dev uniquement).');
+}
+if (!OPENROUTER_API_KEY) {
+  console.warn('[webhook] OPENROUTER_API_KEY non défini : réponses déterministes locales uniquement.');
 }
 
 /**
@@ -80,38 +85,532 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// --- Traitement du message avec l'IA Legal Flow (Prompt 2) ---
-async function processLegalFlowMessage(from, text) {
-  const question = (text || '').slice(0, 1000);
-  try {
-    // Option 1 : interroger l'API Legal Flow déployée (recommandé en prod).
-    if (LEGALFLOW_API_URL) {
-      const headers = { 'Content-Type': 'application/json' };
-      if (LEGALFLOW_API_TOKEN) headers.Authorization = `Bearer ${LEGALFLOW_API_TOKEN}`;
-      const r = await fetch(`${LEGALFLOW_API_URL.replace(/\/$/, '')}/api/chat`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ message: question, dossierContext: 'Question reçue via WhatsApp.' }),
-      });
-      if (r.ok) {
-        const data = await r.json();
-        if (data && data.reply) return String(data.reply).slice(0, 4000);
-      }
-      console.warn(`[webhook] API Legal Flow HTTP ${r.status}, repli local.`);
+// ---------------------------------------------------------------------------
+// Moteur Legal Flow (portage allégé de server/legalRagEngine.ts,
+// server/fallback/normalize.ts et de la route /api/chat de server.ts).
+// Pas d'embeddings locaux ici (poids trop lourds pour 256 Mo) : recherche
+// plein-texte Supabase puis corpus local certifié (zéro-échec).
+// ---------------------------------------------------------------------------
+
+const LOCAL_LEGAL_CORPUS = [
+  {
+    id: 'cgi-art-340',
+    source_fichier: 'CGI 2026 TEXT.txt',
+    reference_article: 'Article 340 & suivants',
+    contenu:
+      "Taxe sur la Valeur Ajoutée (TVA) : Les personnes physiques et morales assujetties au Régime Simplifié d'Imposition (RSI) ou au Réel Normal réalisant un chiffre d'affaires supérieur au seuil légal sont tenues de souscrire une déclaration mensuelle au plus tard le 20 de chaque mois sur le portail e-impots.gouv.ci. Taux standard : 18%. Le défaut de déclaration dans les délais entraîne une majoration automatique de 10% des droits dus (Article 160 du Livre de Procédures Fiscales), augmentée d'un intérêt de retard de 1% par mois ou fraction de mois de retard.",
+    keywords: ['tva', 'declaration', '20', 'mensuelle', 'e-impots', 'penalite', 'retard', '10%', '1%'],
+  },
+  {
+    id: 'cgi-art-115-its',
+    source_fichier: 'CGI 2026 TEXT.txt',
+    reference_article: 'Article 115 & Annexe Fiscale 2026',
+    contenu:
+      "Impôt sur les Traitements et Salaires (ITS) & Retenues à la source : Tout employeur établi en Côte d'Ivoire est tenu d'opérer la retenue de l'impôt sur les salaires payés à son personnel et de la reverser au receveur des impôts compétent au plus tard le 15 du mois suivant sur formulaire fiscal dématérialisé. Les sanctions applicables en cas de non-déclaration ou de retard comprennent une majoration de 25% en cas de récidive ou de retard supérieur à 30 jours.",
+    keywords: ['its', 'salaire', 'traitements', 'retenue', 'employeur', '15', 'mensuel'],
+  },
+  {
+    id: 'cnps-art-24-cotisations',
+    source_fichier: 'CNPS_Code_Prevoyance_Sociale.txt',
+    reference_article: 'Articles 24 à 28 du Code de Prévoyance Sociale',
+    contenu:
+      "Cotisations de sécurité sociale CNPS : Les cotisations dues au titre des branches Retraite (part patronale 7.7%, part salariale 6.3%), Prestations Familiales (part patronale 5.75%) et Accidents du Travail / Maladies Professionnelles (taux secteur BTP fixé à 4.00% par arrêté interministériel) doivent être déclarées et acquittées au plus tard le 15 du mois suivant via la plateforme e.cnps.ci. Tout mois de retard génère une pénalité d'astreinte de 10% dès le premier jour de retard, plus 1% par mois écoulé.",
+    keywords: ['cnps', 'cotisation', 'retraite', 'prestation', 'accident', 'at', 'btp', '15', 'e.cnps.ci', '7.7%', '6.3%'],
+  },
+  {
+    id: 'cmu-decret-2025',
+    source_fichier: 'Decret_CMU_Obligatoire_2025.txt',
+    reference_article: 'Décret portant généralisation de la Couverture Maladie Universelle (CMU)',
+    contenu:
+      "Obligation d'assujettissement CMU : Tout employeur du secteur privé a l'obligation légale de veiller à l'enrôlement et au paiement de la cotisation CMU pour l'intégralité de ses salariés déclarés (1 000 FCFA par personne et par mois, dont 500 FCFA part patronale et 500 FCFA part salariale prélevée à la source). La délivrance de l'attestation de régularité CNPS et la soumission aux marchés publics sont désormais conditionnées à l'attestation de non-redevance CMU émise par la CNAM.",
+    keywords: ['cmu', 'couverture', 'maladie', '1000', 'cnam', 'quitus', 'enrolement', 'salarie'],
+  },
+  {
+    id: 'cgi-art-110-cga',
+    source_fichier: 'CGI 2026 TEXT.txt',
+    reference_article: 'Article 110 & Dispositions Incitatives CGA',
+    contenu:
+      "Avantage fiscal Centre de Gestion Agréé (CGA) : Les entreprises adhérentes à un CGA agréé par la DGI bénéficient d'un abattement de 20% à 25% sur leur assiette de bénéfice imposable (BIC ou impôt forfaitaire RSI). En contrepartie, l'adhérent s'engage à déposer ses états financiers certifiés dans les délais légaux et à respecter une régularité déclarative sans incident. La perte de l'attestation de conformité annuelle du CGA entraîne la révocation rétroactive de l'abattement.",
+    keywords: ['cga', 'centre de gestion agree', 'abattement', '20%', '25%', 'bic', 'reduction', 'fiscale', 'benefice'],
+  },
+  {
+    id: 'fdfp-loi-formation',
+    source_fichier: 'FDFP_Reglementation_Formation_Continue.txt',
+    reference_article: 'Articles 12 à 18 Loi relative au financement de la formation professionnelle continue',
+    contenu:
+      "Taxe d'apprentissage et contribution à la formation continue FDFP : Les employeurs redevables cotisent mensuellement à hauteur de 0.4% pour la taxe d'apprentissage et 1.2% pour la formation professionnelle continue assise sur la masse salariale brute. Les entreprises à jour de leurs cotisations disposent du droit de soumettre un plan de formation annuel agréé permettant le remboursement direct jusqu'à 0.6% de leur masse salariale sous forme de stages certifiés pour leurs collaborateurs.",
+    keywords: ['fdfp', 'formation', 'continue', 'apprentissage', '0.4%', '1.2%', 'remboursement', 'plan de formation'],
+  },
+  {
+    id: 'cgi-regimes-seuils',
+    source_fichier: 'CGI 2026 TEXT.txt',
+    reference_article: 'Article 45 & Régimes d’imposition',
+    contenu:
+      "Plafonds des régimes fiscaux en Côte d'Ivoire : Régime de l'Entreprenant : CA inférieur ou égal à 50 000 000 FCFA. Régime des Microentreprises (RME) : CA compris entre 50 000 001 et 150 000 000 FCFA (ou RSI pour prestations et commerces). Régime du Réel Normal : CA supérieur à 150 000 000 FCFA. Tout dépassement du seuil de 150 000 000 FCFA sur deux exercices consécutifs ou dès dépassement de 10% entraîne le basculement automatique sous le régime du Réel Normal avec assujettissement obligatoire à la TVA complète et production d'états financiers selon le Système Normal SYSCOHADA.",
+    keywords: ['seuil', 'rsi', 'rme', 'reel normal', '150', '150 000 000', 'bascule', 'chiffre d affaires', 'ca'],
+  },
+  {
+    id: 'code-travail-contrat',
+    source_fichier: 'Code_du_Travail_CI.txt',
+    reference_article: 'Articles 14.1 à 15.3 du Code du Travail de Côte d’Ivoire',
+    contenu:
+      "Embauche et formalisation du contrat : Tout contrat de travail à durée déterminée (CDD) excédant trois mois doit obligatoirement être constaté par écrit et mentionner la qualification, le salaire catégoriel selon la Convention Collective Interprofessionnelle et le lieu de travail. La déclaration préalable d'embauche et l'immatriculation du salarié auprès de la CNPS doivent être effectuées dans un délai maximal de huit (8) jours suivant la prise effective de fonction.",
+    keywords: ['embauche', 'contrat', 'cdd', 'cdi', 'code du travail', 'declaration', '8 jours', 'convention collective'],
+  },
+  {
+    id: 'douanes-bsc-sydonia',
+    source_fichier: 'Code_des_Douanes_UEMOA_CI.txt',
+    reference_article: 'Réglementation Portuaire & Guichet Unique du Commerce Extérieur (GUCE)',
+    contenu:
+      "Importation de matériels et matériaux : Toute marchandise acheminée par voie maritime à destination d'Abidjan ou San Pedro requiert l'obtention préalable d'un Bordereau de Suivi des Cargaisons (BSC) validé par l'OIC avant embarquement. Le dédouanement s'effectue obligatoirement via le système Sydonia World sur déclaration en détail D6/D3 avec application du Tarif Extérieur Commun (TEC) de l'UEMOA, du Prélèvement Communautaire de Solidarité (PCS 0.8%) et de la TVA douanière de 18%.",
+    keywords: ['douane', 'bsc', 'sydonia', 'importation', 'guce', 'tec', 'uemoa', 'materiel', 'btp'],
+  },
+  {
+    id: 'syscohada-comptabilite',
+    source_fichier: 'SYSCOHADA_Acte_Uniforme_Comptabilite.txt',
+    reference_article: 'Articles 17 à 24 de l’Acte Uniforme SYSCOHADA',
+    contenu:
+      "Obligations comptables et tenue des livres légaux : Toute entité commerciale en Côte d'Ivoire doit tenir un Livre-Journal, un Grand-Livre et un Livre d'Inventaire cotés et paraphés. Pour les entreprises sous le Système Normal (CA > 150M FCFA), les états financiers annuels obligatoires comprennent le Bilan, le Compte de Résultat, le Tableau des Flux de Trésorerie et les Notes Annexes certifiées, à déposer au greffe et aux impôts au plus tard le 30 avril.",
+    keywords: ['syscohada', 'comptabilite', 'livre', 'journal', 'grand-livre', 'inventaire', 'bilan', 'etats financiers', '30 avril'],
+  },
+  {
+    id: 'lpf-controles-sanctions',
+    source_fichier: 'Livre_de_Procedures_Fiscales_CI.txt',
+    reference_article: 'Articles 160 à 175 du Livre de Procédures Fiscales (LPF)',
+    contenu:
+      "Sanctions et pénalités de contrôle fiscal : Tout retard dans le dépôt d'une déclaration mensuelle entraîne une majoration automatique de 10% des droits dus. En cas de taxation d'office ou de mauvaise foi constatée lors d'un contrôle sur pièces ou vérification générale, la majoration est portée à 25% voire 50%, majorée d'un intérêt de retard de 1% par mois. L'Attestation de Régularité Fiscale (ARF) est immédiatement révoquée jusqu'à apurement complet.",
+    keywords: ['lpf', 'procedure', 'controle', 'sanction', 'penalite', '10%', '25%', '50%', 'arf', 'interet', 'retard'],
+  },
+];
+
+function stemFr(word) {
+  let w = word;
+  const suffixes = ['ations', 'ation', 'ements', 'ement', 'isses', 'issant', 'euses', 'euse', 'eurs', 'eur', 'aux', 'eaux'];
+  for (const s of suffixes) {
+    if (w.length > s.length + 3 && w.endsWith(s)) {
+      w = w.slice(0, -s.length);
+      break;
     }
-    // Option 3 : réponse de test (pas d'IA branchée).
-    return (
-      `🤖 Legal Flow : Merci pour votre question fiscale.\n` +
-      `Notre équipe analyse : "${question}".\n` +
-      `Pour une réponse complète, contactez-nous au +225 XX XX XX XX.`
-    );
-  } catch (error) {
-    console.error('Erreur IA :', error && error.message ? error.message : error);
-    return "⚠️ Désolé, une erreur technique s'est produite. Veuillez réessayer.";
+  }
+  if (w.length > 4 && (w.endsWith('s') || w.endsWith('x'))) w = w.slice(0, -1);
+  if (w.length > 5 && w.endsWith('e')) w = w.slice(0, -1);
+  return w;
+}
+
+function normalizeQuery(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map(stemFr)
+    .filter(Boolean)
+    .join(' ');
+}
+
+const THEMES = [
+  { id: 'tva', keywords: ['tva', 'impot', 'taxe sur la valeur ajoutée', 'valeur ajoutée', 'déclaration mensuelle', 'crédit tva', 'déductible'] },
+  { id: 'cnps', keywords: ['cnps', 'retraite', 'prestations familiales', 'cotisations sociales', 'cotisation', 'accident du travail', 'maladie professionnelle', 'disa', 'branche'] },
+  { id: 'cmu', keywords: ['cmu', 'couverture maladie', 'couverture', 'cnam', 'assurance maladie', 'enrôlement', 'quitus'] },
+  { id: 'cga', keywords: ['cga', 'centre de gestion agréé', 'abattement', 'réduction', 'crédit', 'crédit d’impôt', 'optimisation', 'optimisation fiscale'] },
+  { id: 'seuil', keywords: ['seuil', '150', '150 000 000', 'rsi', 'réel normal', 'régime', 'bascule', 'microentreprise'] },
+  { id: 'fdfp', keywords: ['fdfp', 'formation continue', 'formation professionnelle', 'formation', 'apprentissage', 'taxe d’apprentissage', 'plan de formation', 'remboursement'] },
+  { id: 'embauche', keywords: ['embauche', 'embaucher', 'contrat', 'cdd', 'cdi', 'smig', 'salaire', 'recrutement', 'immatriculation', 'registre employeur'] },
+  { id: 'douane', keywords: ['douane', 'douanes', 'bsc', 'sydonia', 'guce', 'transit', 'importation', 'import', 'exportation', 'dédouanement', 'fret', 'connaissement'] },
+  { id: 'arf', keywords: ['arf', 'attestation de régularité', 'attestation fiscale', 'attestation', 'quitus fiscal', 'régularité'] },
+];
+
+const STEM_CACHE = new Map();
+function themeStems(t) {
+  let cached = STEM_CACHE.get(t.id);
+  if (!cached) {
+    cached = [...new Set(t.keywords.map((k) => normalizeQuery(k)).filter(Boolean))];
+    STEM_CACHE.set(t.id, cached);
+  }
+  return cached;
+}
+
+function detectTheme(rawQuery) {
+  const norm = ' ' + normalizeQuery(rawQuery) + ' ';
+  let best = { theme: null, score: 0 };
+  for (const theme of THEMES) {
+    let score = 0;
+    for (const stemKw of themeStems(theme)) {
+      if (norm.includes(' ' + stemKw + ' ')) score += stemKw.split(' ').length;
+    }
+    if (score > best.score) best = { theme: theme.id, score };
+  }
+  return best;
+}
+
+function searchLocalCorpus(query, limit = 6) {
+  const queryLower = String(query || '').toLowerCase();
+  const scored = LOCAL_LEGAL_CORPUS.map((doc) => {
+    let score = 0.55;
+    for (const kw of doc.keywords) {
+      if (queryLower.includes(kw)) score += 0.08;
+    }
+    if (queryLower.includes(doc.source_fichier.toLowerCase().replace('.txt', ''))) score += 0.12;
+    if (queryLower.includes(doc.reference_article.toLowerCase())) score += 0.15;
+    score = Math.min(0.96, Math.max(0.65, score));
+    return {
+      id: doc.id,
+      source_fichier: doc.source_fichier,
+      reference_article: doc.reference_article,
+      contenu: doc.contenu,
+      similarity: parseFloat(score.toFixed(2)),
+    };
+  });
+  scored.sort((a, b) => b.similarity - a.similarity);
+  return scored.slice(0, limit);
+}
+
+// Recherche plein-texte Supabase (repli SQL de searchLegalDocuments) via REST.
+async function searchSupabaseRest(query, limit = 6) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  const keywords = String(query || '')
+    .toLowerCase()
+    .replace(/[^a-zA-Z0-9àâéèêëîïôùûüç]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3)
+    .slice(0, 4);
+  if (keywords.length === 0) return null;
+  const orFilter = keywords.map((k) => 'contenu.ilike.*' + k + '*').join(',');
+  const url =
+    SUPABASE_URL +
+    '/rest/v1/documents_juridiques?select=id,source_fichier,reference_article,contenu&or=(' +
+    encodeURIComponent(orFilter) +
+    ')&limit=' +
+    limit;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const r = await fetch(url, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY },
+      signal: controller.signal,
+    });
+    if (!r.ok) {
+      console.warn('[webhook] Supabase REST HTTP ' + r.status + ', repli local.');
+      return null;
+    }
+    const data = await r.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return data.map((item, idx) => ({
+      id: item.id != null ? String(item.id) : undefined,
+      source_fichier: item.source_fichier || 'Code Général des Impôts CI',
+      reference_article: item.reference_article || 'Article de Loi',
+      contenu: item.contenu || '',
+      similarity: 0.88 - idx * 0.04,
+    }));
+  } catch (e) {
+    console.warn('[webhook] Supabase REST indisponible, repli local : ' + (e && e.message ? e.message : e));
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-// --- Envoyer un message via l'API WhatsApp (Prompt 2) ---
+async function searchLegalDocuments(query, limit = 6) {
+  try {
+    const remote = await searchSupabaseRest(query, limit);
+    if (remote && remote.length > 0) return remote;
+  } catch (e) {
+    console.warn('[webhook] recherche Supabase échouée, repli local.');
+  }
+  return searchLocalCorpus(query, limit);
+}
+
+function buildSystemPrompt(dossierContext, legalContextText) {
+  return (
+    "Tu es LEGAL FLOW AI, l'intelligence artificielle experte en conformité fiscale et droit des affaires pour la République de Côte d'Ivoire.\n" +
+    "Tu réponds aux dirigeants d'entreprises, directeurs administratifs et financiers (DAF) et experts-comptables en droit ivoirien (CGI, CNPS, CMU, FDFP, Code du Travail, Actes Uniformes OHADA/SYSCOHADA).\n" +
+    '\n### DIRECTIVES IMPÉRATIVES DÉONTOLOGIQUES :\n' +
+    "1. INTERDICTION FORMELLE D'INVENTER : Défense absolue de fabriquer des articles, des taux d'imposition ou des pénalités inexistants. Fonde-toi strictement sur les textes officiels ivoiriens et les extraits ci-dessous.\n" +
+    '2. OBLIGATION DE CITER : Mention obligatoire de la source exacte (nom du texte officiel et numéro d\'article officiel).\n' +
+    "3. AVEU DE LIMITE : Si la base ne contient pas la règle applicable, écris exactement : « Je ne trouve pas d'information dans les textes et extraits fournis. »\n" +
+    '4. STRUCTURE OBLIGATOIRE : règle essentielle en une phrase, détail des obligations / calculs (FCFA), démarche pas-à-pas (e-impots, e-CNPS), délais et pénalités, conseil d\'optimisation légale.\n' +
+    '5. Réponse concise adaptée à WhatsApp (maximum ~1500 caractères), en français clair.\n' +
+    '\n### CONTEXTE DU DOSSIER CLIENT ACTIF :\n' +
+    (dossierContext || "Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.") +
+    '\n\n### EXTRAITS DE TEXTES JURIDIQUES ISSUS DU RAG (BASE OFFICIELLE) :\n' +
+    (legalContextText || 'Aucun extrait textuel spécifique identifié.')
+  );
+}
+
+async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + OPENROUTER_API_KEY,
+        'HTTP-Referer': 'https://legalflow.ci',
+        'X-Title': 'Legal Flow CI - Assistant Fiscal & Juridique',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.3,
+        max_tokens: 1500,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: message },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!r.ok) return { status: r.status, reply: null };
+    const data = await r.json();
+    const reply = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    return { status: r.status, reply: typeof reply === 'string' && reply ? reply : null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Le roster gratuit OpenRouter tourne : si le modèle principal disparaît
+// (404), bascule automatique sur le routeur gratuit avant le repli local.
+async function callOpenRouter(systemPrompt, message) {
+  if (!OPENROUTER_API_KEY) return null;
+  try {
+    let res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, 12000);
+    if (res.status === 404 && OPENROUTER_MODEL !== 'openrouter/free') {
+      console.warn('[webhook] modèle ' + OPENROUTER_MODEL + ' introuvable (404), bascule openrouter/free.');
+      res = await postChatCompletions('openrouter/free', systemPrompt, message, 12000);
+    }
+    if (!res.reply) {
+      console.warn('[webhook] OpenRouter HTTP ' + res.status + ', repli local.');
+      return null;
+    }
+    console.log('[webhook] réponse LLM OK (modèle demandé : ' + OPENROUTER_MODEL + ').');
+    return res.reply;
+  } catch (e) {
+    console.warn('[webhook] OpenRouter indisponible, repli local : ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
+function buildDeterministicExpertResponse(query, sources, dossierContext) {
+  const match = detectTheme(query);
+  void dossierContext;
+
+  if (match.theme === 'tva') {
+    return `### 1. La règle essentielle
+En Côte d'Ivoire, toute entreprise sous le régime RSI ou Réel Normal est tenue de déclarer et d'acquitter la TVA (taux standard de 18%) au plus tard le **20 de chaque mois** pour les opérations du mois précédent.
+
+### 2. Le détail des obligations & calculs
+- **Assiette taxable** : Chiffre d'affaires facturé hors taxes sur les situations de travaux et prestations BTP.
+- **Taux légal** : 18% (Article 340 du Code Général des Impôts).
+- **Crédit de TVA** : Déductible sous réserve de factures normalisées avec sticker/mention DGI valide.
+
+### 3. La démarche opérationnelle pas-à-pas
+1. Connectez-vous sur **e-impots.gouv.ci** avec vos identifiants.
+2. Rubrique « Déclarations périodiques » -> « Taxe sur la Valeur Ajoutée ».
+3. Renseignez ventes et TVA déductible sur achats et sous-traitance.
+4. Validez et télépayez pour générer la quittance électronique.
+
+### 4. Délais légaux et pénalités de retard
+- **Échéance** : le 20 du mois à 23h59.
+- Majoration de **10%** (Article 160 du Livre de Procédures Fiscales) + **1% par mois** de retard. Risque de blocage de l'ARF.
+
+### 5. Conseil d'optimisation légale
+Avec un **CGA**, dispense des majorations sur la première régularisation spontanée avant contrôle et abattement fiscal sur vos bénéfices.`;
+  }
+
+  if (match.theme === 'cnps') {
+    return `### 1. La règle essentielle
+Les cotisations sociales doivent être déclarées et payées au plus tard le **15 de chaque mois** via e-CNPS.
+
+### 2. Le détail des obligations & calculs (BTP)
+| Branche | Part patronale | Part salariale |
+| :--- | :---: | :---: |
+| **Retraite** | 7,70% | 6,30% |
+| **Prestations familiales** | 5,75% | 0% |
+| **AT/MP BTP** | 4,00% | 0% |
+| **Total** | **17,45%** | **6,30%** |
+
+### 3. La démarche pas-à-pas
+1. Accédez à **e.cnps.ci**.
+2. Téléversez la déclaration nominative des salaires.
+3. Rapprochez avec vos bulletins de paie.
+4. Payez sous quittance CNPS.
+
+### 4. Délais et pénalités (Art. 24 à 28 CPS)
+- Astreinte de **10%** dès le 1er jour de retard + **1% par mois**. Suspension de l'attestation de mise à jour CNPS.
+
+### 5. Conseil
+Déposez la DISA avant le 30 mars chaque année pour sécuriser les droits de vos salariés.`;
+  }
+
+  if (match.theme === 'cmu') {
+    return `### 1. La règle essentielle
+L'affiliation et le paiement de la CMU sont obligatoires pour tous les salariés déclarés.
+
+### 2. Obligations & calculs
+- **1 000 FCFA** par salarié et par mois (500 FCFA employeur + 500 FCFA salarié).
+- Sans quitus CMU (CNAM), la CNPS bloque l'attestation de régularité sociale.
+
+### 3. Démarche
+1. Rapprochez les numéros d'assurés de tous les salariés.
+2. Versez le global à la CNAM / guichet e-CNPS couplé.
+3. Téléchargez le certificat de non-redevance mensuel.
+
+### 4. Conseil
+Convention de groupe avec un centre d'enrôlement mobile CNAM pour régulariser vos chantiers en une session.`;
+  }
+
+  if (match.theme === 'cga') {
+    return `### 1. La règle essentielle
+L'adhésion à un **CGA** accorde un abattement de **20% à 25%** sur le bénéfice net imposable (Article 110 du CGI).
+
+### 2. Conditions
+- Réservé RSI / microentreprises sous seuils de l'Annexe Fiscale.
+- États financiers déposés dans les délais, régularité déclarative.
+
+### 3. Démarche
+1. Dossier d'adhésion auprès du CGA agréé de votre zone.
+2. Balances et journaux trimestriels pour visa.
+3. Attestation Annuelle de Conformité jointe à la liasse fiscale.
+
+### 4. Sanction
+Non-dépôt au 30 avril : abattement annulé + rappel de droits majoré de 25%.
+
+### 5. Conseil
+Cumulez avec un plan **FDFP** : jusqu'à 0,6% de la masse salariale en formations remboursées.`;
+  }
+
+  if (match.theme === 'seuil') {
+    return `### 1. La règle essentielle
+Le RSI est plafonné à **150 000 000 FCFA** de CA annuel HT (Article 45 du CGI).
+
+### 2. Seuils
+- Entreprenant : CA ≤ 50 000 000 FCFA.
+- RME/RSI : 50 000 001 à 150 000 000 FCFA.
+- Réel Normal : CA > 150 000 000 FCFA.
+
+### 3. Bascule
+Dépassement sur 2 exercices consécutifs (ou > 10%) = bascule automatique au Réel Normal (TVA mensuelle, SYSCOHADA normal).
+
+### 4. Délais et sanctions
+Notification avant le 1er février de l'exercice suivant. Franchissement dissimulé : redressement + rappel de TVA + majoration **25% à 50%**.`;
+  }
+
+  if (match.theme === 'fdfp') {
+    return `### 1. La règle essentielle
+Tout employeur cotise au **FDFP** : **1,6%** de la masse salariale brute (0,4% apprentissage + 1,2% formation continue).
+
+### 2. Vos droits
+- Jusqu'à **0,6%** de la masse salariale récupérable en formations subventionnées.
+
+### 3. Démarche
+1. Être à jour des versements mensuels (échéance le **15**, majoration **10%** en cas de retard).
+2. Plan de formation annuel avant le 30 septembre.
+3. Dossier sur **fdfp.ci**, puis remboursement sur attestations.`;
+  }
+
+  if (match.theme === 'embauche') {
+    return `### 1. La règle essentielle
+Tout recrutement : déclaration préalable + immatriculation CNPS sous **8 jours** (Art. 14.1 à 15.3 du Code du Travail).
+
+### 2. Points clés
+- **SMIG** : 75 000 FCFA / mois (40h).
+- CDD > 3 mois : écrit obligatoire.
+- Charges associées : 23,75% CNPS + 1 000 FCFA CMU + 1,6% FDFP.
+
+### 3. Démarche
+1. Contrat conforme à la Convention Collective.
+2. Déclaration sur **e.cnps.ci** (numéro d'assuré).
+3. Enrôlement CMU (CNAM).
+4. Inscription au Registre d'Employeur.
+
+### 4. Sanctions
+50 000 à 200 000 FCFA par travailleur non déclaré + cotisations rétroactives majorées de 10%.`;
+  }
+
+  if (match.theme === 'douane') {
+    return `### 1. La règle essentielle
+Importation maritime : **BSC** validé par l'OIC **avant embarquement**, obligatoire.
+
+### 2. Droits et taxes
+- TEC UEMOA 0% à 20%, TVA douanière 18%, PCS 0,8%, Redevance Statistique 1%.
+- Dédouanement via **Sydonia World** (GUCE).
+
+### 3. Démarche
+1. Dossier GUCE (**guce.gouv.ci**) : proforma + connaissement.
+2. BSC visé par l'OIC.
+3. Commissionnaire agréé : déclaration D3/D6.
+4. Paiement sous quittance électronique.
+
+### 4. Sanction
+Défaut de BSC : pénalité = **100% du fret** maritime.`;
+  }
+
+  if (match.theme === 'arf') {
+    return `### 1. La règle essentielle
+L'**ARF** est délivrée sur e-impots.gouv.ci aux entreprises à jour (validité **3 mois**).
+
+### 2. Conditions
+- Zéro dette exigible (TVA, ITS, Patente, BIC/IMF), déclarations à bonne date.
+- Obligatoire pour marchés publics et agréments BTP.
+
+### 3. Démarche
+1. **e-impots.gouv.ci** -> « Demandes d'attestations » -> « ARF ».
+2. Génération instantanée avec QR si comptes apurés.
+3. Archivez-la dans Legal Flow (score d'audit).
+
+### 4. Blocage
+Une seule déclaration en retard bloque la délivrance. En difficulté : demandez un échéancier au receveur CDI.`;
+  }
+
+  const topSource = (sources && sources[0]) || null;
+  return `### 1. La règle essentielle
+Conformément à la législation ivoirienne (${(topSource && topSource.source_fichier) || 'Code Général des Impôts CI'}, ${(topSource && topSource.reference_article) || 'DGI/CNPS'}), respectez téléprocédures et délais officiels.
+
+### 2. Vos obligations (RSI, BTP)
+- TVA 18% (le 20), ITS (le 15), CNPS 17,45% patronal (le 15), CMU 1 000 FCFA/salarié, FDFP 1,6%.
+- Référence identifiée : **${(topSource && topSource.reference_article) || 'Dispositions fiscales et sociales'}**.
+
+### 3. Démarche
+1. Vérifiez vos opérations sur **e-impots.gouv.ci** et **e.cnps.ci**.
+2. Chaque télépaiement = quittance QR archivée dans Legal Flow.
+
+### 4. Pénalités
+Retard : majoration **10%** + **1% par mois**. Contrôle : jusqu'à **50%**.
+
+### 5. Conseil
+Précisez votre question (TVA, CNPS, CMU, CGA, FDFP, embauche, douane, ARF) pour une fiche experte complète.`;
+}
+
+// --- Traitement du message avec l'IA Legal Flow ---
+async function processLegalFlowMessage(from, text) {
+  const question = (text || '').slice(0, 1000);
+  const dossierContext = "Question reçue via WhatsApp du " + (from || 'client') + ". Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.";
+  try {
+    const docs = await searchLegalDocuments(question, 6);
+    const legalContextText = (docs || [])
+      .map(
+        (doc, i) =>
+          '[Extrait ' + (i + 1) + '] Source: ' + doc.source_fichier + ' | Réf: ' + doc.reference_article + ' (Similarité: ' + Math.round(doc.similarity * 100) + '%)\nTexte: ' + doc.contenu
+      )
+      .join('\n\n');
+    const systemPrompt = buildSystemPrompt(dossierContext, legalContextText);
+    const reply = await callOpenRouter(systemPrompt, question);
+    if (reply) return String(reply).slice(0, 4000);
+    console.warn('[webhook] OpenRouter sans réponse, repli déterministe local.');
+    return buildDeterministicExpertResponse(question, docs, dossierContext).slice(0, 4000);
+  } catch (error) {
+    console.error('Erreur IA :', error && error.message ? error.message : error);
+    try {
+      return buildDeterministicExpertResponse(question, searchLocalCorpus(question, 6), dossierContext).slice(0, 4000);
+    } catch {
+      return "⚠️ Désolé, une erreur technique s'est produite. Veuillez réessayer.";
+    }
+  }
+}
+
+// --- Envoyer un message via l'API WhatsApp ---
 async function sendWhatsAppMessage(to, text) {
   if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
     console.warn('[webhook] envoi ignoré : WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN manquants.');
@@ -177,6 +676,9 @@ app.post('/webhook', async (req, res) => {
   // Toujours 200 OK à Meta (évite les retries), même en cas d'erreur interne.
   return res.sendStatus(200);
 });
+
+// Helpers exposés pour tests locaux (node) — sans effet en production.
+exports.__test__ = { detectTheme, buildDeterministicExpertResponse, searchLocalCorpus, normalizeQuery };
 
 // Exposer la fonction (URL : https://[REGION]-legalflowio.cloudfunctions.net/whatsappWebhook/webhook)
 exports.whatsappWebhook = functions.https.onRequest(app);
