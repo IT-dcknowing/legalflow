@@ -37,7 +37,7 @@ const META_API_VERSION = process.env.META_API_VERSION || 'v26.0';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'dots-studio/dots-3-note-preview:free';
 const OPENROUTER_TIMEOUT_MS = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '25000', 10);
 const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '900', 10);
 
