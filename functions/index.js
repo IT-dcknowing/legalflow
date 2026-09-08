@@ -37,7 +37,9 @@ const META_API_VERSION = process.env.META_API_VERSION || 'v26.0';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free';
+const OPENROUTER_TIMEOUT_MS = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '25000', 10);
+const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '900', 10);
 
 if (!process.env.VERIFY_TOKEN) {
   console.warn('[webhook] VERIFY_TOKEN non défini : repli local KeySoc26 (dev uniquement).');
@@ -353,7 +355,7 @@ async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
       body: JSON.stringify({
         model,
         temperature: 0.3,
-        max_tokens: 1500,
+        max_tokens: OPENROUTER_MAX_TOKENS,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message },
@@ -372,13 +374,19 @@ async function postChatCompletions(model, systemPrompt, message, timeoutMs) {
 
 // Le roster gratuit OpenRouter tourne : si le modèle principal disparaît
 // (404), bascule automatique sur le routeur gratuit avant le repli local.
+// Le gratuit est limité (429) : un seul retry après 2 s avant le repli.
 async function callOpenRouter(systemPrompt, message) {
   if (!OPENROUTER_API_KEY) return null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
-    let res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, 12000);
+    let res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, OPENROUTER_TIMEOUT_MS);
     if (res.status === 404 && OPENROUTER_MODEL !== 'openrouter/free') {
       console.warn('[webhook] modèle ' + OPENROUTER_MODEL + ' introuvable (404), bascule openrouter/free.');
-      res = await postChatCompletions('openrouter/free', systemPrompt, message, 12000);
+      res = await postChatCompletions('openrouter/free', systemPrompt, message, OPENROUTER_TIMEOUT_MS);
+    } else if ((res.status === 429 || (res.status >= 500 && res.status < 600)) && !res.reply) {
+      console.warn('[webhook] OpenRouter HTTP ' + res.status + ', nouvel essai dans 2 s.');
+      await sleep(2000);
+      res = await postChatCompletions(OPENROUTER_MODEL, systemPrompt, message, OPENROUTER_TIMEOUT_MS);
     }
     if (!res.reply) {
       console.warn('[webhook] OpenRouter HTTP ' + res.status + ', repli local.');
