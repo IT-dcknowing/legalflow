@@ -48,6 +48,17 @@ export async function bridgeToSupabase(idToken: string): Promise<string | null> 
     }
     return 'Session impossible. Réessayez. Détail : ' + msg;
   }
+  // Audit : le grant peut réussir sans identité propagée (OIDC mal configuré →
+  // auth.uid() NULL et RLS aveugle). On vérifie la session explicitement.
+  try {
+    const { data, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !data?.session?.user) {
+      await supabase.auth.signOut().catch(() => undefined);
+      return 'Session Supabase vide après le pont (config OIDC Firebase à vérifier côté dashboard).';
+    }
+  } catch {
+    return 'Vérification de session impossible. Réessayez.';
+  }
   return null;
 }
 

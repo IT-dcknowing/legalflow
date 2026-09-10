@@ -36,7 +36,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onNavigateToVeille,
   onToggleMobileMenu,
   unreadCount = 3,
-  currentRole = 'utilisateur',
+  currentRole = 'entreprise',
   currentUser,
   onSelectProfile,
   whatsappMuted = false,

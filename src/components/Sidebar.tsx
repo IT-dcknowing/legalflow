@@ -62,7 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   companyName = 'Alex Koffi',
   isMobileOpen = false,
   onCloseMobile,
-  role = 'utilisateur',
+  role = 'entreprise',
   companies = [],
   activeCompanyId,
   isGestionnaireInCompanyMode = false,
@@ -182,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     icon: React.ReactNode;
     badge?: React.ReactNode;
   }> = [
-    ...(role === 'utilisateur'
+    ...(role === 'entreprise'
       ? [
           {
             id: 'accueil' as PageId,

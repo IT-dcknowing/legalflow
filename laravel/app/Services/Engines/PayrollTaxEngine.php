@@ -29,9 +29,9 @@ final class PayrollTaxEngine
     public const float TAUX_ATMP_COMMERCE = 0.03; // 3% Commerce
     public const float TAUX_ATMP_SERVICES = 0.02; // 2% Services / Tertiaire
 
-    // Cotisation CMU forfaitaire mensuelle par salarié
-    public const int COTISATION_CMU_SALARIE = 1_000;
-    public const int COTISATION_CMU_EMPLOYEUR = 1_000;
+    // Cotisation CMU : 1 000 FCFA / salarié / mois au total (500 + 500).
+    public const int COTISATION_CMU_SALARIE = 500;
+    public const int COTISATION_CMU_EMPLOYEUR = 500;
 
     // Taux FDFP
     public const float TAUX_FDFP_TAXE_APPRENTISSAGE = 0.004; // 0.4%

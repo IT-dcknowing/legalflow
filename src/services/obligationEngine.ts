@@ -528,13 +528,30 @@ export class ObligationEngine {
   /**
    * Normalise le libellé du régime fiscal pour la correspondance
    */
-  public static normalizeRegime(regime: string = ''): 'RSI' | 'RNI' | 'RME' | 'TEE' | 'TOUS' {
-    const upper = regime.toUpperCase();
+  public static normalizeRegime(regime: string = ''): 'RSI' | 'RNI' | 'RME' | 'TEE' | 'TOUS' {    const upper = regime.toUpperCase();
     if (upper.includes('RSI') || upper.includes('SIMPLIFIÉ')) return 'RSI';
     if (upper.includes('RNI') || upper.includes('RÉEL NORMAL') || upper.includes('REEL NORMAL')) return 'RNI';
     if (upper.includes('MICRO') || upper.includes('RME')) return 'RME';
     if (upper.includes('ENTREPRENANT') || upper.includes('TEE')) return 'TEE';
     return 'RSI'; // Par défaut
+  }
+
+  /**
+   * Régime suggéré selon le CA annuel HT (CGI art. 45 : Entreprenant ≤ 50M,
+   * RME/RSI jusqu'à 150M, Réel Normal au-delà). Utilisé pour détecter un
+   * franchissement de seuil (bascule) avant le filtrage des règles.
+   */
+  public static regimeForCA(caEstime: number): 'TEE' | 'RME' | 'RSI' | 'RNI' {
+    if (caEstime <= 50_000_000) return 'TEE';
+    if (caEstime <= 150_000_000) return 'RSI';
+    return 'RNI';
+  }
+
+  /** Vrai si le CA déclaré impose un régime supérieur au régime du profil. */
+  public static hasRegimeBascule(regimeProfil: string, caEstime: number): boolean {
+    const order = { TEE: 0, RME: 1, RSI: 1, RNI: 2, TOUS: 1 } as const;
+    const current = this.normalizeRegime(regimeProfil);
+    return order[this.regimeForCA(caEstime)] > order[current];
   }
 
   /**

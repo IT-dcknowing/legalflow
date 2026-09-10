@@ -12,13 +12,13 @@ interface ProfileSwitcherProps {
 const ROLE_LABELS: Record<UserRole, string> = {
   super_admin: 'Super Admin HQ',
   gestionnaire: 'Gestionnaire',
-  utilisateur: 'Utilisateur',
+  entreprise: 'Entreprise',
 };
 
 const ROLE_STYLES: Record<UserRole, string> = {
   super_admin: 'bg-[#F3EFFF] text-[#7C3AED] border-[#DDD0FA]',
   gestionnaire: 'bg-[#EDEBF9] text-[#3D3680] border-[#C7C4E8]',
-  utilisateur: 'bg-[#E0F2FE] text-[#0369A1] border-[#BAE6FD]',
+  entreprise: 'bg-[#E0F2FE] text-[#0369A1] border-[#BAE6FD]',
 };
 
 /**

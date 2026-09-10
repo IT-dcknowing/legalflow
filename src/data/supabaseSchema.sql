@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email VARCHAR(255) NOT NULL UNIQUE,
     full_name VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('super_admin', 'gestionnaire', 'utilisateur')),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('super_admin', 'gestionnaire', 'entreprise')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -167,7 +167,7 @@ CREATE POLICY "Gestionnaire et Super Admin peuvent créer des entreprises"
     ON public.entreprises FOR INSERT
     WITH CHECK (
         public.is_super_admin() OR
-        EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('gestionnaire', 'utilisateur'))
+        EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role IN ('gestionnaire', 'entreprise'))
     );
 
 CREATE POLICY "Gestionnaire et User peuvent modifier leurs entreprises"

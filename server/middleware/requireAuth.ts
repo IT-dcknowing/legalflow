@@ -20,6 +20,13 @@ function getVerifier() {
 export interface AuthenticatedUser {
   id: string;
   email?: string;
+  role?: string;
+}
+
+/** Requête Express après requireAuth (+ correlationId). */
+export interface AuthenticatedRequest extends Request {
+  id?: string;
+  user?: AuthenticatedUser;
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -35,6 +42,30 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: 'Token invalide ou expiré.' });
     return;
   }
-  (req as any).user = { id: data.user.id, email: data.user.email } as AuthenticatedUser;
+  // Audit : rôle rattaché dès l'authentification (limite l'usurpation de périmètre).
+  let role: string | undefined;
+  try {
+    const { data: profile } = await client
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    role = (profile as { role?: string } | null)?.role;
+  } catch {
+    /* RLS ou table indisponible : id seul, les routes sensibles exigent un rôle */
+  }
+  (req as AuthenticatedRequest).user = { id: data.user.id, email: data.user.email, role };
   next();
+}
+
+/** Garde de rôle pour les routes sensibles (audit : périmètre par rôle). */
+export function requireRole(...allowed: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = (req as AuthenticatedRequest).user;
+    if (!user?.role || !allowed.includes(user.role)) {
+      res.status(403).json({ error: 'Rôle insuffisant.' });
+      return;
+    }
+    next();
+  };
 }

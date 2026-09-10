@@ -32,7 +32,7 @@ export const ReportPdfModal: React.FC<ReportPdfModalProps> = ({
   obligations,
   opportunities = [],
   initialState = 'miroir',
-  userRole = 'utilisateur',
+  userRole = 'entreprise',
   onArchiveDocument,
 }) => {
   const [reportState, setReportState] = useState<'miroir' | 'certifie'>(initialState);
@@ -43,8 +43,8 @@ export const ReportPdfModal: React.FC<ReportPdfModalProps> = ({
 
   // Synchroniser quand initialState change à l'ouverture & réinitialiser le scroll
   useEffect(() => {
-    if (isOpen) {
-      if (userRole === 'utilisateur') {
+      if (isOpen) {
+        if (userRole === 'entreprise') {
         setReportState('miroir');
       } else {
         setReportState(initialState);

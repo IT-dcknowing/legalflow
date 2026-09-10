@@ -12,7 +12,7 @@
  *   mes_entreprises, gestionnaire_journal) + pages entreprise (mode client :
  *   accueil, dashboard, echeancier, opportunites, bibliotheque, veille,
  *   documents, profil).
- * - entreprise (utilisateur) actif → accueil, dashboard, echeancier,
+ * - entreprise actif → accueil, dashboard, echeancier,
  *   opportunites, bibliotheque, veille, documents, profil, entreprise_historique.
  */
 import type { PageId } from '../types';

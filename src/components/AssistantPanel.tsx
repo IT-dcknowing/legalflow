@@ -152,6 +152,8 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
 }) => {
   const { playSentSound, playResponseSound } = useSoundEffects();
   const hydratedRef = useRef(false);
+  // Audit : backend Express injoignable (ex : Hosting statique) → on l'affiche.
+  const [isBackendDown, setIsBackendDown] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -285,6 +287,7 @@ Posez-moi vos questions sur vos obligations, calculs de cotisations, vos démarc
 
       // Déclencher l'effet sonore de réponse de l'IA
       playResponseSound();
+      setIsBackendDown(false);
 
       let inlineLink: { text: string; page: PageId } | undefined = undefined;
       const lower = text.toLowerCase();
@@ -313,6 +316,7 @@ Posez-moi vos questions sur vos obligations, calculs de cotisations, vos démarc
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
       console.warn('Erreur API Chat, bascule locale:', err);
+      setIsBackendDown(true);
       // Déclencher l'effet sonore
       playResponseSound();
 
@@ -425,6 +429,11 @@ Vérifiez le maintien de votre abattement de 20-25% via votre adhésion CGA.`,
         <div className="flex items-center gap-1 text-[#475569] shrink-0 font-medium">
           <ShieldCheck className="w-3.5 h-3.5 text-[#15803D]" />
           <span>Droit Ivoirien 2026</span>
+          {isBackendDown && (
+            <span className="text-[9px] bg-[#FEF3D6] text-[#B45309] px-1.5 py-0.5 rounded font-bold border border-[#FDE68A]">
+              Serveur IA injoignable — réponses locales
+            </span>
+          )}
         </div>
       </div>
 

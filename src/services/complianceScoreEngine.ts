@@ -2,6 +2,24 @@ import { Obligation } from '../types';
 import { SCORE_PENALITE_BASE } from './constants';
 
 /**
+ * Table unique de normalisation des domaines (audit : plus de remapping ad-hoc
+ * dispersé — tout nouveau domaine tombe dans 'juridique' par défaut traçable).
+ */
+export const DOMAIN_ALIASES: Record<string, 'fiscal' | 'social' | 'juridique' | 'commerce' | 'audit'> = {
+  fiscal: 'fiscal',
+  social: 'social',
+  juridique: 'juridique',
+  administratif: 'juridique',
+  commerce: 'commerce',
+  douanes: 'commerce',
+  audit: 'audit',
+};
+
+export function normalizeDomain(domaine: string): 'fiscal' | 'social' | 'juridique' | 'commerce' | 'audit' {
+  return DOMAIN_ALIASES[domaine] || 'juridique';
+}
+
+/**
  * Poids d'un retard selon son ancienneté (PEN-028 LOG-003) : un retard
  * de 97 jours pèse plus qu'un retard de 4 jours. Facteur 0.5 → 2.
  */
@@ -68,9 +86,7 @@ export class ComplianceScoreEngine {
     const recommandations: Array<{ priorite: 'P1' | 'P2' | 'P3'; action: string; impact: string }> = [];
 
     obligations.forEach((ob) => {
-      let domKey: string = ob.domaine;
-      if (ob.domaine === 'administratif') domKey = 'juridique';
-      else if (ob.domaine === 'douanes') domKey = 'commerce';
+      const domKey: string = normalizeDomain(ob.domaine);
 
       if (!domains[domKey]) domains[domKey] = { total: 0, points: 0, retards: 0 };
       domains[domKey].total++;

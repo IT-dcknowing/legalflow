@@ -780,7 +780,7 @@ async function callOpenRouter(systemPrompt, userText, history) {
   }
 }
 
-function buildDeterministicExpertResponse(query, sources, dossierContext) {
+function buildDeterministicExpertResponseInner(query, sources, dossierContext) {
   const match = detectTheme(query);
   void dossierContext;
 
@@ -988,6 +988,39 @@ Retard : majoration **10%** + **1% par mois**. Contrôle : jusqu'à **50%**.
 
 ### 5. Conseil
 Précisez votre question (TVA, CNPS, CMU, CGA, FDFP, embauche, douane, ARF) pour une fiche experte complète.`;
+}
+
+const THEME_LABELS = {
+  tva: 'TVA', cnps: 'CNPS', cmu: 'CMU', cga: 'CGA', seuil: 'seuils RSI',
+  fdfp: 'FDFP', embauche: 'embauche', douane: 'douane', arf: 'ARF', imf: 'IMF',
+};
+
+/** Tous les thèmes détectés (audit : question multi-axes → ne pas ignorer le 2e). */
+function detectAllThemes(rawQuery) {
+  const norm = ' ' + normalizeQuery(rawQuery) + ' ';
+  const out = [];
+  for (const theme of THEMES) {
+    let score = 0;
+    for (const stemKw of themeStems(theme)) {
+      if (norm.includes(' ' + stemKw + ' ')) score += stemKw.split(' ').length;
+    }
+    if (score > 0) out.push({ theme: theme.id, score });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+function buildDeterministicExpertResponse(query, sources, dossierContext) {
+  const reply = buildDeterministicExpertResponseInner(query, sources, dossierContext);
+  const ranked = detectAllThemes(query);
+  if (ranked.length > 1 && ranked[1].score >= 1) {
+    const others = ranked
+      .slice(1, 3)
+      .map((r) => THEME_LABELS[r.theme] || r.theme)
+      .join(', ');
+    return reply + '\n\n---\nAutres sujets détectés : ' + others + '. Précisez votre question pour une fiche dédiée.';
+  }
+  return reply;
 }
 
 // --- Traitement du message : pipeline Context Engine -------------------------

@@ -208,9 +208,13 @@ export function App() {
   // Pas de session, pas de tokens, pas d'OAuth. Login/Signup redirigent
   // directement vers l'app ; le sélecteur de profils démo pilote les niveaux.
   // Base de données et tout le reste inchangés.
-  // Réactivation : passer AUTH_BYPASSED à false ET restaurer le bloc session
-  // (getSession/onAuthStateChange/enterRealSession) depuis l'historique git.
-  const AUTH_BYPASSED = true;
+  // Garde-fou audit : piloté par VITE_DEMO_MODE (défaut true = comportement
+  // actuel). Mettre VITE_DEMO_MODE=false + restaurer le bloc session
+  // (getSession/onAuthStateChange/enterRealSession) depuis l'historique git
+  // pour réactiver l'auth réelle.
+  // ⚠️ Ne JAMAIS déployer en production avec VITE_DEMO_MODE=true et des
+  // données réelles : ProfileSwitcher permet l'usurpation de rôle en local.
+  const AUTH_BYPASSED = import.meta.env.VITE_DEMO_MODE !== 'false';
   const [authUserId] = useState<string | null>(null);
   const [dbProfile] = useState<DbProfile | null>(null);
   const [authReady] = useState(true);
@@ -381,13 +385,13 @@ export function App() {
       const incomplet = companies.find((c) => c.id === 'ent-nguessan') || companies[0];
       setActiveCompanyId(incomplet.id);
       setProfile(entityToProfile(incomplet));
-      setCurrentRole('utilisateur');
+      setCurrentRole('entreprise');
       setActivePage('dashboard');
     } else {
       const complet = companies.find((c) => c.id === 'ent-koffi') || companies[0];
       setActiveCompanyId(complet.id);
       setProfile(entityToProfile(complet));
-      setCurrentRole('utilisateur');
+      setCurrentRole('entreprise');
       setActivePage('dashboard');
     }
   };
@@ -960,7 +964,7 @@ export function App() {
                 <JournalPage role="gestionnaire" entreprises={companies} />
               )}
 
-            {activePage === 'entreprise_historique' && <JournalPage role="utilisateur" />}
+            {activePage === 'entreprise_historique' && <JournalPage role="entreprise" />}
 
             {currentRole === 'super_admin' && activePage === 'super_admin_journal' && (
               <JournalPage role="super_admin" />

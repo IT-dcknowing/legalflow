@@ -5,6 +5,20 @@ import {
   generateThresholdOccurrences,
 } from '../obligationEngine';
 
+describe('ObligationEngine.regimeForCA (CGI art. 45 : seuils 50M / 150M)', () => {
+  it('50M → TEE, 100M → RSI, 150M → RSI, 151M → RNI', () => {
+    expect(ObligationEngine.regimeForCA(50_000_000)).toBe('TEE');
+    expect(ObligationEngine.regimeForCA(100_000_000)).toBe('RSI');
+    expect(ObligationEngine.regimeForCA(150_000_000)).toBe('RSI');
+    expect(ObligationEngine.regimeForCA(150_000_001)).toBe('RNI');
+  });
+  it('bascule détectée RSI 142,5M → non, RSI 160M → oui', () => {
+    expect(ObligationEngine.hasRegimeBascule('RSI', 142_500_000)).toBe(false);
+    expect(ObligationEngine.hasRegimeBascule('RSI', 160_000_000)).toBe(true);
+    expect(ObligationEngine.hasRegimeBascule('RNI', 300_000_000)).toBe(false);
+  });
+});
+
 const KOFFI = {
   secteur: 'BTP',
   secteurActivite: 'BTP / Travaux publics',

@@ -1,4 +1,4 @@
-export type UserRole = 'super_admin' | 'gestionnaire' | 'utilisateur';
+export type UserRole = 'super_admin' | 'gestionnaire' | 'entreprise';
 
 export type PageId =
   // Pages publiques (hors session)

@@ -51,7 +51,9 @@ export interface CompanyPayrollResult {
 export class PayrollTaxEngine {
   public static readonly PLAFOND_CNPS_PF = 70_000;
   public static readonly PLAFOND_CNPS_RETRAITE = 2_700_000;
-  public static readonly COTISATION_CMU_UNITAIRE = 1_000;
+  // CMU : 1 000 FCFA / salarié / mois au total (500 part salariale + 500 part patronale).
+  public static readonly COTISATION_CMU_SALARIALE = 500;
+  public static readonly COTISATION_CMU_PATRONALE = 500;
 
   public static calculateEmployee(
     salaireBrut: number,
@@ -72,7 +74,7 @@ export class PayrollTaxEngine {
     const cnpsRetraiteSalariale = Math.round(baseRetraite * 0.063);
 
     // CMU Salariale
-    const cmuSalariale = assujettiCmu ? this.COTISATION_CMU_UNITAIRE : 0;
+    const cmuSalariale = assujettiCmu ? this.COTISATION_CMU_SALARIALE : 0;
 
     // Impôts sur salaires (IS, CN, IGR)
     const baseImposable = salaireBrut * 0.8;
@@ -112,7 +114,7 @@ export class PayrollTaxEngine {
     const cnpsRetraitePatronale = Math.round(baseRetraite * 0.077);
     const cnpsTotal = cnpsPrestationsFamiliales + cnpsAccidentsTravail + cnpsRetraitePatronale;
 
-    const cmuPatronale = assujettiCmu ? this.COTISATION_CMU_UNITAIRE : 0;
+    const cmuPatronale = assujettiCmu ? this.COTISATION_CMU_PATRONALE : 0;
     const fdfpApprentissage = Math.round(salaireBrut * 0.004);
     const fdfpFormationContinue = Math.round(salaireBrut * 0.012);
     const fdfpPartRecuperable = Math.round(salaireBrut * 0.006);
@@ -157,7 +159,11 @@ export class PayrollTaxEngine {
     masseSalarialeMensuelle: number,
     effectif: number,
     secteur: 'btp' | 'commerce' | 'industrie' | 'services' = 'btp',
-    salariesAffiliesCmu = effectif
+    salariesAffiliesCmu = effectif,
+    // Audit : si les salaires individuels sont connus, le calcul exact par tête
+    // remplace l'approximation par salaire moyen (biaisée par les plafonds
+    // CNPS 2,7M/70k et la progressivité ITS/IGR).
+    salaires?: number[]
   ): CompanyPayrollResult {
     if (effectif <= 0 || masseSalarialeMensuelle <= 0) {
       return {
@@ -178,13 +184,36 @@ export class PayrollTaxEngine {
     const salaireMoyen = masseSalarialeMensuelle / effectif;
     const simOne = this.calculateEmployee(salaireMoyen, secteur, 1.5, true);
 
-    const totalCnps = Math.round(simOne.versementsOrganismes.cnpsTotal * effectif);
-    const totalIts = Math.round((simOne.chargesSalariales.is + simOne.chargesSalariales.cn + simOne.chargesSalariales.igr) * effectif);
-    const totalFdfp = Math.round(simOne.chargesPatronales.fdfpTotal * effectif);
-    const fdfpRecuperableAnnuel = Math.round(simOne.chargesPatronales.fdfpPartRecuperable * effectif * 12);
+    // Mode exact : somme tête par tête quand la distribution est connue.
+    let totalCnps: number;
+    let totalIts: number;
+    let totalFdfp: number;
+    let fdfpRecuperableAnnuel: number;
+    if (salaires && salaires.length === effectif && salaires.every((s) => s >= 0)) {
+      let cnps = 0;
+      let its = 0;
+      let fdfp = 0;
+      let fdfpRecup = 0;
+      for (const brut of salaires) {
+        const sim = this.calculateEmployee(brut, secteur, 1.5, true);
+        cnps += sim.versementsOrganismes.cnpsTotal;
+        its += sim.chargesSalariales.is + sim.chargesSalariales.cn + sim.chargesSalariales.igr;
+        fdfp += sim.chargesPatronales.fdfpTotal;
+        fdfpRecup += sim.chargesPatronales.fdfpPartRecuperable;
+      }
+      totalCnps = Math.round(cnps);
+      totalIts = Math.round(its);
+      totalFdfp = Math.round(fdfp);
+      fdfpRecuperableAnnuel = Math.round(fdfpRecup * 12);
+    } else {
+      totalCnps = Math.round(simOne.versementsOrganismes.cnpsTotal * effectif);
+      totalIts = Math.round((simOne.chargesSalariales.is + simOne.chargesSalariales.cn + simOne.chargesSalariales.igr) * effectif);
+      totalFdfp = Math.round(simOne.chargesPatronales.fdfpTotal * effectif);
+      fdfpRecuperableAnnuel = Math.round(simOne.chargesPatronales.fdfpPartRecuperable * effectif * 12);
+    }
 
     const cmuCount = Math.min(effectif, Math.max(0, salariesAffiliesCmu));
-    const totalCmu = cmuCount * 2000;
+    const totalCmu = cmuCount * (this.COTISATION_CMU_SALARIALE + this.COTISATION_CMU_PATRONALE);
 
     return {
       effectif,

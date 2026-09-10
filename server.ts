@@ -10,7 +10,7 @@ import {
 } from './server/legalRagEngine';
 import { logger } from './server/logger';
 import { correlationId } from './server/middleware/correlationId';
-import { requireAuth } from './server/middleware/requireAuth';
+import { requireAuth, requireRole, type AuthenticatedRequest } from './server/middleware/requireAuth';
 import { apiLimiter } from './server/middleware/apiLimiter';
 import { chatSchema, ragSearchSchema } from './server/schemas/chat';
 import { openrouterBreaker, breakerState } from './server/circuit/openrouterBreaker';
@@ -62,8 +62,8 @@ app.get('/metrics', async (_req, res) => {
 });
 
 // 2. Route RAG direct (test & audit des extraits juridiques) — protégée PEN-021
-app.post('/api/rag/search', apiLimiter, requireAuth, async (req, res) => {
-  const reqId = (req as any).id;
+app.post('/api/rag/search', apiLimiter, requireAuth, requireRole('super_admin', 'gestionnaire', 'entreprise'), async (req, res) => {
+  const reqId = (req as AuthenticatedRequest).id;
   try {
     const parsed = ragSearchSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -85,8 +85,8 @@ app.post('/api/rag/search', apiLimiter, requireAuth, async (req, res) => {
 
 // 3. Route Principale Chat LLM & RAG (OpenRouter minimax/minimax-m3:free + Fallback Déterministe)
 // Protégée : JWT (401) + rate limit (429) + validation Zod (400). Cache LRU + circuit breaker.
-app.post('/api/chat', apiLimiter, requireAuth, async (req, res) => {
-  const reqId = (req as any).id;
+app.post('/api/chat', apiLimiter, requireAuth, requireRole('super_admin', 'gestionnaire', 'entreprise'), async (req, res) => {
+  const reqId = (req as AuthenticatedRequest).id;
   const userId = ((req as any).user?.id as string) || '';
   const parsed = chatSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -198,9 +198,9 @@ function userClient(req: express.Request) {
 
 // 4. RGPD — Export des données utilisateur (PEN-033, Loi CI 2013-450)
 app.get('/api/user/export-data', apiLimiter, requireAuth, async (req, res) => {
-  const reqId = (req as any).id;
+  const reqId = (req as AuthenticatedRequest).id;
   try {
-    const userId = ((req as any).user?.id as string) || '';
+    const userId = (req as AuthenticatedRequest).user?.id || '';
     const sb = userClient(req);
     const [profile, entreprises, journal, conversations] = await Promise.all([
       sb.from('profiles').select('*').eq('id', userId),
@@ -229,9 +229,9 @@ app.get('/api/user/export-data', apiLimiter, requireAuth, async (req, res) => {
 // service_role, indisponible ici → anonymisation app + dissociation à finaliser
 // via Edge Function ; voir kanban PEN-033).
 app.delete('/api/user/account', apiLimiter, requireAuth, async (req, res) => {
-  const reqId = (req as any).id;
+  const reqId = (req as AuthenticatedRequest).id;
   try {
-    const userId = ((req as any).user?.id as string) || '';
+    const userId = (req as AuthenticatedRequest).user?.id || '';
     const sb = userClient(req);
     await sb.from('chatbot_conversations').delete().eq('user_id', userId);
     await sb
