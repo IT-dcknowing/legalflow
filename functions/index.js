@@ -40,12 +40,18 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'dots-studio/dots-3-note-preview:free';
 const OPENROUTER_TIMEOUT_MS = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '25000', 10);
 const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '900', 10);
+// Émulateur local : assouplissements autorisés UNIQUEMENT ici (jamais en prod).
+const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
-if (!process.env.VERIFY_TOKEN) {
-  console.warn('[webhook] VERIFY_TOKEN non défini : repli local KeySoc26 (dev uniquement).');
+if (!process.env.VERIFY_TOKEN && !IS_EMULATOR) {
+  console.error('[CRITICAL] VERIFY_TOKEN absent en production : la vérification Meta échouera (403).');
+} else if (!process.env.VERIFY_TOKEN) {
+  console.warn('[webhook] VERIFY_TOKEN non défini : repli local KeySoc26 (émulateur uniquement).');
 }
-if (!WHATSAPP_APP_SECRET) {
-  console.warn('[webhook] WHATSAPP_APP_SECRET non défini : signature NON vérifiée (dev uniquement).');
+if (!WHATSAPP_APP_SECRET && !IS_EMULATOR) {
+  console.error('[CRITICAL] WHATSAPP_APP_SECRET absent en production : les webhooks seront REJETÉS (fail-closed).');
+} else if (!WHATSAPP_APP_SECRET) {
+  console.warn('[webhook] WHATSAPP_APP_SECRET non défini : signature NON vérifiée (émulateur uniquement).');
 }
 if (!OPENROUTER_API_KEY) {
   console.warn('[webhook] OPENROUTER_API_KEY non défini : réponses déterministes locales uniquement.');
@@ -53,12 +59,17 @@ if (!OPENROUTER_API_KEY) {
 
 /**
  * Vérifie l'en-tête X-Hub-Signature-256 (HMAC-SHA256 du corps brut).
- * Sans secret configuré (dev local) : accepte en loggant un avertissement.
+ * Fail-closed en production : sans secret, on REJETTE. Le bypass n'existe
+ * que sous émulateur local (FUNCTIONS_EMULATOR=true).
  */
 function signatureValide(req) {
   if (!WHATSAPP_APP_SECRET) {
-    console.warn('[webhook] signature ignorée : aucun App Secret configuré.');
-    return true;
+    if (IS_EMULATOR) {
+      console.warn('[webhook] signature ignorée : aucun App Secret configuré (émulateur).');
+      return true;
+    }
+    console.error('[CRITICAL] webhook rejeté : WHATSAPP_APP_SECRET non configuré.');
+    return false;
   }
   const sig = req.headers['x-hub-signature-256'] || '';
   const expected =
@@ -514,6 +525,17 @@ const memorySessions = new Map();
 let firestoreDb = null;
 let firestoreTried = false;
 
+// Firestore en panne ne doit JAMAIS ralentir un webhook : 3 s max, puis mémoire.
+const FIRESTORE_TIMEOUT_MS = 3000;
+function withFirestoreTimeout(promise, label) {
+  promise.catch(() => {});
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label + ' : timeout ' + FIRESTORE_TIMEOUT_MS + 'ms')), FIRESTORE_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function getFirestore() {
   if (firestoreDb || firestoreTried) return firestoreDb;
   firestoreTried = true;
@@ -536,7 +558,7 @@ async function getSession(phone) {
   const db = getFirestore();
   if (db) {
     try {
-      const snap = await db.collection('whatsapp_sessions').doc(key).get();
+      const snap = await withFirestoreTimeout(db.collection('whatsapp_sessions').doc(key).get(), 'firestore');
       if (snap.exists) {
         const data = snap.data() || {};
         if (data && now - (data.updatedAt || 0) < SESSION_TTL_MS) {
@@ -560,7 +582,7 @@ async function saveSession(phone, state) {
   const db = getFirestore();
   if (db) {
     try {
-      await db.collection('whatsapp_sessions').doc(key).set(state);
+      await withFirestoreTimeout(db.collection('whatsapp_sessions').doc(key).set(state), 'firestore');
     } catch (e) {
       console.warn('[context] sauvegarde session impossible : ' + (e && e.message ? e.message : e));
     }
@@ -1042,6 +1064,86 @@ async function processLegalFlowMessage(from, text) {
 }
 
 // --- Envoyer un message via l'API WhatsApp ---
+// --- Idempotence + observabilité (audit : anti-doublons Meta, suivi statuts) ---
+// Meta réexpédie un webhook si notre réponse tarde (LLM long) : chaque message
+// porte un identifiant unique (wamid). On le marque avant traitement pour que
+// les retries retournent 200 sans retraiter ni refacturer un appel LLM.
+const PROCESSED_TTL_MS = 48 * 3600 * 1000;
+const memoryProcessed = new Map();
+
+async function processedRecord(wamid) {
+  const mem = memoryProcessed.get(wamid);
+  const now = Date.now();
+  if (mem && now - mem.at < PROCESSED_TTL_MS) return mem;
+  const db = getFirestore();
+  if (db) {
+    try {
+      const snap = await withFirestoreTimeout(db.collection('whatsapp_processed').doc(wamid).get(), 'firestore');
+      if (snap.exists) {
+        const data = snap.data() || {};
+        if (now - (data.at || 0) < PROCESSED_TTL_MS) {
+          memoryProcessed.set(wamid, data);
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('[webhook] lecture idempotence impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+  return null;
+}
+
+async function markProcessed(wamid, record) {
+  const doc = { ...(record || {}), at: Date.now() };
+  memoryProcessed.set(wamid, doc);
+  const db = getFirestore();
+  if (db) {
+    try {
+      await withFirestoreTimeout(db.collection('whatsapp_processed').doc(wamid).set(doc), 'firestore');
+    } catch (e) {
+      console.warn('[webhook] écriture idempotence impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+}
+
+/** Persiste chaque accusé Meta (sent/delivered/read/failed) pour audit. */
+async function trackStatus(st) {
+  if (!st || !st.id) return;
+  const db = getFirestore();
+  const doc = {
+    status: st.status || 'unknown',
+    timestamp: st.timestamp || String(Math.floor(Date.now() / 1000)),
+    recipient_id: st.recipient_id || null,
+    errors: st.errors || null,
+    at: Date.now(),
+  };
+  if (doc.status === 'failed') {
+    console.error('[webhook] ÉCHEC de distribution WhatsApp : ' + JSON.stringify(st));
+  }
+  if (db) {
+    try {
+      await withFirestoreTimeout(db.collection('whatsapp_status').doc(String(st.id)).set(doc), 'firestore');
+    } catch (e) {
+      console.warn('[webhook] suivi statut impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+}
+
+/** Enregistre un envoi sortant définitivement en échec (file des morts). */
+async function trackOutboxFailure(to, text, error) {
+  console.error('[webhook] envoi WhatsApp DÉFINITIVEMENT en échec vers ' + to + ' : ' + error);
+  const db = getFirestore();
+  if (db) {
+    try {
+      await withFirestoreTimeout(db.collection('whatsapp_outbox').add({
+        to, preview: String(text).slice(0, 200), error: String(error).slice(0, 500), at: Date.now(),
+      }), 'firestore');
+    } catch (e) {
+      console.warn('[webhook] file des morts inaccessible : ' + (e && e.message ? e.message : e));
+    }
+  }
+}
+
 async function sendWhatsAppMessage(to, text) {
   if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
     console.warn('[webhook] envoi ignoré : WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN manquants.');
@@ -1054,22 +1156,33 @@ async function sendWhatsAppMessage(to, text) {
     type: 'text',
     text: { body: String(text).slice(0, 4000) },
   };
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) {
-    const errText = await r.text().catch(() => '');
-    console.error(`Erreur envoi WhatsApp HTTP ${r.status} :`, errText);
-    return null;
+  const headers = {
+    Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+    'Content-Type': 'application/json',
+  };
+  // Un seul retry sur erreur réseau / 429 / 5xx (audit : pas de perte sèche).
+  let lastError = 'réponse vide';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({}));
+        console.log('Message envoyé :', JSON.stringify(data));
+        return data;
+      }
+      lastError = 'HTTP ' + r.status + ' : ' + (await r.text().catch(() => ''));
+      const retryable = r.status === 429 || (r.status >= 500 && r.status < 600);
+      if (!retryable || attempt === 2) break;
+      console.warn('[webhook] envoi WhatsApp ' + r.status + ', nouvel essai (tentative 2/2).');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    } catch (e) {
+      lastError = 'réseau : ' + (e && e.message ? e.message : e);
+      if (attempt === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
   }
-  const data = await r.json().catch(() => ({}));
-  console.log('Message envoyé :', JSON.stringify(data));
-  return data;
+  await trackOutboxFailure(to, text, lastError);
+  return null;
 }
 
 // --- Opt-in WhatsApp (CDC §1) : message de bienvenue après inscription ---------
@@ -1108,10 +1221,22 @@ app.post('/optin', async (req, res) => {
 });
 
 // --- Relais de diffusion (digests, urgences) : usage serveur/cron uniquement ---
-// Protégé par jeton applicatif (même VERIFY_TOKEN). Ne jamais appeler depuis le web.
+// Protégé par jeton applicatif (même VERIFY_TOKEN) + garde-fou anti-abus.
+// Ne jamais appeler depuis le web.
+const notifyAttempts = new Map();
+function notifyRateOk(ip) {
+  const now = Date.now();
+  const arr = (notifyAttempts.get(ip) || []).filter((t) => now - t < 60000);
+  if (arr.length >= 10) return false;
+  arr.push(now);
+  notifyAttempts.set(ip, arr);
+  return true;
+}
 app.post('/notify', async (req, res) => {
   const token = req.headers['x-notify-token'] || '';
   if (!VERIFY_TOKEN || token !== VERIFY_TOKEN) return res.sendStatus(403);
+  const ip = String((req.headers['x-forwarded-for'] || req.ip || 'unknown')).split(',')[0].trim();
+  if (!notifyRateOk(ip)) return res.status(429).json({ error: 'Débit maximal atteint (10/min).' });
   const phone = normalizeIvorianPhone(req.body && req.body.phone);
   const text = String((req.body && req.body.text) || '').slice(0, 4000);
   if (!isValidIvorianPhone(phone) || !text) {
@@ -1134,21 +1259,32 @@ app.post('/webhook', async (req, res) => {
       ? body.entry[0].changes[0].value
       : null;
     const messages = (value && value.messages) || [];
-    // Log des statuts (delivered/read) sans traitement.
+    // Accusés Meta persistés (audit : sent/delivered/read/failed tracés).
     if (value && value.statuses) {
-      console.log('Statut WhatsApp :', JSON.stringify(value.statuses));
+      for (const st of value.statuses) {
+        await trackStatus(st);
+      }
     }
     for (const message of messages) {
+      const wamid = message.id || null;
+      // Idempotence : un retry Meta pendant notre traitement LLM ne duplique rien.
+      if (wamid && (await processedRecord(wamid))) {
+        console.log('[webhook] doublon ignoré (déjà traité) : ' + wamid);
+        continue;
+      }
       const from = message.from;
       const text = message.text && message.text.body ? message.text.body : '';
       const type = message.type || 'unknown';
       console.log(`Message reçu de ${from} (type=${type}) : ${text}`);
       if (!from) continue;
+      if (wamid) await markProcessed(wamid, { state: 'processing', from });
       if (message.text && text) {
         const reply = await processLegalFlowMessage(from, text);
         await sendWhatsAppMessage(from, reply);
+        if (wamid) await markProcessed(wamid, { state: 'done', from });
       } else {
         console.log(`[webhook] message non-texte ignoré (type=${type}).`);
+        if (wamid) await markProcessed(wamid, { state: 'ignored', from });
       }
     }
   } catch (error) {
@@ -1164,6 +1300,8 @@ exports.__test__ = {
   detectIntent, detectAcronyms, isCorrectionMessage, extractCorrectionTopic,
   blankConversationState, updateConversationState, needsClarification,
   buildClarificationReply, expandQueryForRetrieval, buildConversationContext,
+  signatureValide, normalizeIvorianPhone, isValidIvorianPhone,
+  processedRecord, markProcessed,
 };
 
 // Exposer la fonction (URL : https://[REGION]-legalflowio.cloudfunctions.net/whatsappWebhook/webhook)

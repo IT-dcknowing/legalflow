@@ -50,6 +50,15 @@ const LS_PREFS = 'lf_notif_prefs';
 const LS_WHATSAPP = 'lf_whatsapp_optin';
 const LS_BANNER_DISMISS = 'lf_banner_dismissed';
 
+/** Repli local assumé ET tracé (audit : pas d'échec silencieux). */
+function warnFallback(scope: string, err: unknown): void {
+  console.warn(
+    `[notifications] ${scope} : repli local/démo (` +
+      (err instanceof Error ? err.message : String(err || 'erreur inconnue')) +
+      ').'
+  );
+}
+
 export interface WhatsappState {
   number: string | null;
   optinAt: string | null;
@@ -89,8 +98,8 @@ export async function fetchNotifications(userId?: string | null): Promise<DbNoti
         .eq('user_id', userId);
       const luesSet = new Set((lues || []).map((r: { notification_id: string }) => r.notification_id));
       return (notifs || []).map((n: DbNotification) => ({ ...n, lu: luesSet.has(n.id) }));
-    } catch {
-      /* repli mocks ci-dessous */
+    } catch (err) {
+      warnFallback('fetchNotifications', err);
     }
   }
   return mockToDb(mockGlobalNotifications);
@@ -158,8 +167,8 @@ export async function getPreferences(userId?: string | null): Promise<Notificati
         .maybeSingle();
       if (error) throw error;
       if (data) return { veille: data.veille, opportunites: data.opportunites, maj_app: data.maj_app };
-    } catch {
-      /* repli local */
+    } catch (err) {
+      warnFallback('getPreferences', err);
     }
   }
   return local;
@@ -208,7 +217,8 @@ export async function fetchVeilleNotes(
         rows = rows.map((r) => ({ ...r, lu: lus.has(r.id) }));
       }
       return rows;
-    } catch {
+    } catch (err) {
+      warnFallback('fetchVeilleNotes', err);
       return [];
     }
   }
@@ -314,8 +324,8 @@ export async function getMaintenanceBanner(): Promise<MaintenanceBannerState> {
       if (error) throw error;
       const v = (data?.value || {}) as Partial<MaintenanceBannerState>;
       return { active: v.active === true, message: String(v.message || '') };
-    } catch {
-      /* repli local */
+    } catch (err) {
+      warnFallback('getMaintenanceBanner', err);
     }
   }
   return lsGet<MaintenanceBannerState>('lf_maintenance_banner', { active: false, message: '' });
@@ -367,8 +377,8 @@ export async function getWhatsappState(userId?: string | null): Promise<Whatsapp
           dismissals: Number(data.whatsapp_popup_dismissals ?? local.dismissals) || 0,
         };
       }
-    } catch {
-      /* repli local */
+    } catch (err) {
+      warnFallback('getWhatsappState', err);
     }
   }
   return local;

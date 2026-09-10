@@ -643,7 +643,9 @@ export function App() {
   };
 
   // ---- CDC UX §1 : opt-in WhatsApp -------------------------------------------
+  // Base configurable (VITE_WHATSAPP_FUNCTIONS_BASE), repli URL prod auditée.
   const WHATSAPP_FUNCTIONS_BASE =
+    (import.meta.env.VITE_WHATSAPP_FUNCTIONS_BASE as string | undefined) ||
     'https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook';
 
   const sendWhatsappWelcome = async (phone: string): Promise<void> => {
