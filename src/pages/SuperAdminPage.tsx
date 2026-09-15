@@ -30,7 +30,6 @@ import {
   ExternalLink,
   ArrowRight,
   TrendingUp,
-  Newspaper,
 } from 'lucide-react';
 import { VeilleAdminPanel } from '../components/VeilleAdminPanel';
 import { publishNotification } from '../services/notifications';
@@ -40,6 +39,8 @@ interface SuperAdminPageProps {
   onSelectCompanyAsAdmin: (companyId: string) => void;
   onNavigate: (page: PageId) => void;
   initialTab?: 'stats' | 'entreprises' | 'pipeline' | 'veille' | 'notifications' | 'audits' | 'emails' | 'schema';
+  /** Navigation par la sidebar (plus d'onglets horizontaux internes). */
+  section?: 'stats' | 'entreprises' | 'pipeline' | 'veille' | 'notifications' | 'audits' | 'emails' | 'schema';
 }
 
 export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
@@ -47,16 +48,9 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
   onSelectCompanyAsAdmin,
   onNavigate,
   initialTab = 'stats',
+  section,
 }) => {
-  const [activeTab, setActiveTab] = useState<
-    'stats' | 'entreprises' | 'pipeline' | 'veille' | 'notifications' | 'audits' | 'emails' | 'schema'
-  >(initialTab);
-
-  React.useEffect(() => {
-    if (initialTab) {
-      setActiveTab(initialTab);
-    }
-  }, [initialTab]);
+  const activeTab = section || initialTab;
 
   const [companySearch, setCompanySearch] = useState('');
   const [companyFilter, setCompanyFilter] = useState<'all' | 'complet' | 'incomplet'>('all');
@@ -149,60 +143,25 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({
 
   return (
     <div id="pageSuperAdmin" className="space-y-6">
-      {/* Header Bannière Super Admin */}
-      <div className="bg-[radial-gradient(120%_180%_at_15%_-20%,rgba(255,255,255,0.25)_0%,rgba(255,255,255,0)_45%),linear-gradient(135deg,#4C1D95_0%,#6D28D9_50%,#7C3AED_100%)] rounded-2xl p-5 sm:p-6 text-white shadow-md border border-[#6D28D9]/40">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/15 text-white border border-white/20">
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>NIVEAU 1 — SUPER ADMIN LEGAL FLOW</span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white m-0">
-              Console de Pilotage Plateforme & Veille Nationale
-            </h1>
-            <p className="text-xs text-white/80 m-0 max-w-2xl">
-              Supervision globale de l’écosystème fiscal & social ivoirien, pipeline réglementaire J0→J+5, diffusion ciblée des alertes et gestion multi-tenants.
-            </p>
+      {/* Header compact (allégé : la sidebar porte déjà l'identité) */}
+      <div className="bg-[linear-gradient(135deg,#4C1D95_0%,#7C3AED_100%)] rounded-2xl px-5 py-4 text-white shadow-xs border border-[#6D28D9]/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/15 text-white border border-white/20">
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>NIVEAU 1 — SUPER ADMIN</span>
           </div>
+          <h1 className="text-base sm:text-lg font-black text-white m-0">
+            Console de Pilotage Plateforme
+          </h1>
+        </div>
 
-          <div className="bg-white/10 border border-white/20 rounded-xl p-3 text-center shrink-0">
-            <div className="text-xs text-white/70 font-semibold uppercase tracking-wider">
-              Entreprises sous surveillance
-            </div>
-            <div className="text-2xl font-black text-white">{totalCompaniesCount}</div>
-            <div className="text-[10px] text-white/80 mt-0.5">Côte d'Ivoire (CGI 2026)</div>
-          </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-white/70 font-semibold uppercase tracking-wider">Entreprises suivies</span>
+          <span className="text-lg font-black text-white">{totalCompaniesCount}</span>
         </div>
       </div>
 
-      {/* Tabs Navigation */}
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-[#E2E8F0] pb-2 text-xs font-bold">
-        {[
-          { id: 'stats', label: 'Dashboard Global', icon: <TrendingUp className="w-3.5 h-3.5" /> },
-          { id: 'entreprises', label: `Entreprises (${companies.length})`, icon: <Building2 className="w-3.5 h-3.5" /> },
-          { id: 'pipeline', label: 'Pipeline Veille (J0→J+5)', icon: <Radio className="w-3.5 h-3.5" /> },
-          { id: 'veille', label: 'Notes & Maintenance', icon: <Newspaper className="w-3.5 h-3.5" /> },
-          { id: 'notifications', label: 'Diffusion Notifications', icon: <Send className="w-3.5 h-3.5" /> },
-          { id: 'audits', label: 'Audits Transversaux', icon: <FileCheck2 className="w-3.5 h-3.5" /> },
-          { id: 'emails', label: 'Rappels J+3, J+7, J+15', icon: <Mail className="w-3.5 h-3.5" /> },
-          { id: 'schema', label: 'Schéma Supabase & RLS', icon: <Database className="w-3.5 h-3.5" /> },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            id={`tabSuperAdmin-${tab.id}`}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
-              activeTab === tab.id
-                ? 'bg-[#7C3AED] text-white shadow-xs'
-                : 'text-[#64748B] hover:text-[#1E293B] hover:bg-[#F1F5F9]'
-            }`}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
-      </div>
-
+      {/* Tabs Navigation — supprimée : la sidebar est l'unique navigation. */}
       {/* TAB 1: STATS GLOBALES */}
       {activeTab === 'stats' && (
         <div className="space-y-6">

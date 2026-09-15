@@ -40,6 +40,9 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'dots-studio/dots-3-note-preview:free';
 const OPENROUTER_TIMEOUT_MS = parseInt(process.env.OPENROUTER_TIMEOUT_MS || '25000', 10);
 const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '900', 10);
+// Jeton lecture supervision (page WhatsApp Logs). Si absent : endpoint désactivé.
+// Transitoire démo : à remplacer par Custom Claims à la réactivation de l'auth.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 // Émulateur local : assouplissements autorisés UNIQUEMENT ici (jamais en prod).
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
@@ -526,12 +529,15 @@ let firestoreDb = null;
 let firestoreTried = false;
 
 // Firestore en panne ne doit JAMAIS ralentir un webhook : 3 s max, puis mémoire.
+// La supervision admin (hors temps réel Meta) tolère 10 s.
 const FIRESTORE_TIMEOUT_MS = 3000;
-function withFirestoreTimeout(promise, label) {
+const FIRESTORE_TIMEOUT_ADMIN_MS = 10000;
+function withFirestoreTimeout(promise, label, ms) {
   promise.catch(() => {});
   let timer;
+  const timeoutMs = ms || FIRESTORE_TIMEOUT_MS;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(label + ' : timeout ' + FIRESTORE_TIMEOUT_MS + 'ms')), FIRESTORE_TIMEOUT_MS);
+    timer = setTimeout(() => reject(new Error(label + ' : timeout ' + timeoutMs + 'ms')), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -1251,6 +1257,95 @@ app.post('/optin', async (req, res) => {
   );
   if (!sent) return res.status(502).json({ error: "Envoi WhatsApp impossible pour le moment." });
   return res.json({ ok: true });
+});
+
+// --- Supervision WhatsApp Logs : état du numéro + conversations + statuts ----
+// Lecture seule, jeton dédié, 10 req/min/IP. Tout ce que l'API permet de
+// récupérer : fiche du numéro (Meta) + sessions, statuts, échecs (Firestore).
+const adminAttempts = new Map();
+function adminRateOk(ip) {
+  const now = Date.now();
+  const arr = (adminAttempts.get(ip) || []).filter((t) => now - t < 60000);
+  if (arr.length >= 10) return false;
+  arr.push(now);
+  adminAttempts.set(ip, arr);
+  return true;
+}
+app.get('/admin/whatsapp-overview', async (req, res) => {
+  const token = req.headers['x-admin-token'] || '';
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) return res.sendStatus(403);
+  const ip = String((req.headers['x-forwarded-for'] || req.ip || 'unknown')).split(',')[0].trim();
+  if (!adminRateOk(ip)) return res.status(429).json({ error: 'Débit maximal atteint (10/min).' });
+
+  // 1. Fiche du numéro via Meta Graph API.
+  let phone = null;
+  if (WHATSAPP_PHONE_NUMBER_ID && WHATSAPP_ACCESS_TOKEN) {
+    try {
+      const r = await fetch(
+        `https://graph.facebook.com/${META_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}?fields=display_phone_number,verified_name,quality_rating,code_verification_status`,
+        { headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}` } }
+      );
+      phone = r.ok ? await r.json() : { error: 'Meta HTTP ' + r.status };
+    } catch (e) {
+      phone = { error: 'Meta injoignable : ' + (e && e.message ? e.message : e) };
+    }
+  } else {
+    phone = { error: 'Identifiants Meta non configurés.' };
+  }
+
+  // 2. Firestore : sessions, statuts récents, file des morts.
+  const db = getFirestore();
+  const conversations = [];
+  const recentStatuses = [];
+  const outbox = [];
+  if (db) {
+    try {
+      const [sessSnap, statSnap, outSnap] = await Promise.all([
+        withFirestoreTimeout(db.collection('whatsapp_sessions').orderBy('updatedAt', 'desc').limit(100).get(), 'firestore', FIRESTORE_TIMEOUT_ADMIN_MS),
+        withFirestoreTimeout(db.collection('whatsapp_status').orderBy('at', 'desc').limit(50).get(), 'firestore', FIRESTORE_TIMEOUT_ADMIN_MS),
+        withFirestoreTimeout(db.collection('whatsapp_outbox').orderBy('at', 'desc').limit(20).get(), 'firestore', FIRESTORE_TIMEOUT_ADMIN_MS),
+      ]);
+      sessSnap.forEach((d) => {
+        const s = d.data() || {};
+        conversations.push({
+          phone: d.id,
+          topic: s.topic || null,
+          intent: s.user_intent || null,
+          stage: s.conversation_stage || null,
+          regime: s.tax_regime || null,
+          entities: s.entities || [],
+          corrections: (s.corrections || []).map((c) => ({ error: c.error, fix: c.fix, at: c.at })),
+          history: (s.history || []).slice(-12),
+          messageCount: (s.history || []).length,
+          updatedAt: s.updatedAt || null,
+        });
+      });
+      statSnap.forEach((d) => recentStatuses.push({ wamid: d.id, ...(d.data() || {}) }));
+      outSnap.forEach((d) => outbox.push({ id: d.id, ...(d.data() || {}) }));
+    } catch (e) {
+      console.warn('[admin] agrégation impossible : ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  // 3. KPI calculés sur l'échantillon.
+  const now = Date.now();
+  const active24h = conversations.filter((c) => c.updatedAt && now - c.updatedAt < 86400000).length;
+  const byStatus = {};
+  for (const s of recentStatuses) byStatus[s.status] = (byStatus[s.status] || 0) + 1;
+  return res.json({
+    phone,
+    kpis: {
+      conversations: conversations.length,
+      active24h,
+      delivered: byStatus.delivered || 0,
+      read: byStatus.read || 0,
+      failed: byStatus.failed || 0,
+      outboxFailures: outbox.length,
+    },
+    conversations,
+    recentStatuses,
+    outbox,
+  });
 });
 
 // --- Relais de diffusion (digests, urgences) : usage serveur/cron uniquement ---

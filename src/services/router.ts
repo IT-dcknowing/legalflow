@@ -28,6 +28,7 @@ const PATHS: Array<[PageId, string]> = [
   ['super_admin_entreprises', '/admin/entreprises'],
   ['super_admin_pipeline', '/admin/pipeline'],
   ['super_admin_notifications', '/admin/notifications'],
+  ['super_admin_whatsapp', '/admin/whatsapp'],
   ['super_admin_audits', '/admin/audits'],
   ['super_admin_rappels', '/admin/rappels'],
   ['super_admin_journal', '/admin/journal'],

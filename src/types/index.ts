@@ -24,6 +24,7 @@ export type PageId =
   | 'super_admin_entreprises'
   | 'super_admin_pipeline'
   | 'super_admin_notifications'
+  | 'super_admin_whatsapp'
   | 'super_admin_audits'
   | 'super_admin_rappels'
   | 'super_admin_journal'

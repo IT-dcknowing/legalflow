@@ -98,6 +98,7 @@ import { VeillePage } from './pages/VeillePage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { ProfilPage } from './pages/ProfilPage';
 import { ParametresPage } from './pages/ParametresPage';
+import { WhatsappLogsPage } from './pages/WhatsappLogsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { GestionnaireDashboardPage } from './pages/GestionnaireDashboardPage';
 import { GestionnaireEntreprisesPage } from './pages/GestionnaireEntreprisesPage';
@@ -418,6 +419,7 @@ export function App() {
     super_admin_entreprises: 'Entreprises Référencées',
     super_admin_pipeline: 'Pipeline de Veille Réglementaire (J0→J+5)',
     super_admin_notifications: 'Diffusion Notifications',
+    super_admin_whatsapp: 'WhatsApp Logs',
     super_admin_audits: 'Audits Transversaux',
     super_admin_rappels: 'Séquences de Rappels (J+3, J+7, J+15)',
     super_admin_journal: 'Journal d’audit',
@@ -974,7 +976,7 @@ export function App() {
               <CabinetsEnAttentePage />
             )}
 
-            {/* SUPER ADMIN PAGES */}
+            {/* SUPER ADMIN PAGES (navigation par sidebar, sans onglets internes) */}
             {(activePage === 'super_admin' ||
               activePage === 'super_admin_entreprises' ||
               activePage === 'super_admin_pipeline' ||
@@ -985,7 +987,7 @@ export function App() {
                 companies={companies}
                 onSelectCompanyAsAdmin={handleSelectCompany}
                 onNavigate={handleNavigate}
-                initialTab={
+                section={
                   activePage === 'super_admin_entreprises'
                     ? 'entreprises'
                     : activePage === 'super_admin_pipeline'
@@ -999,6 +1001,10 @@ export function App() {
                     : 'stats'
                 }
               />
+            )}
+
+            {currentRole === 'super_admin' && activePage === 'super_admin_whatsapp' && (
+              <WhatsappLogsPage />
             )}
 
             {activePage === 'accueil' && <AccueilPage onNavigate={handleNavigate} />}

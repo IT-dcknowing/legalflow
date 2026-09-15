@@ -20,6 +20,7 @@ import {
   Briefcase,
   Settings,
   History,
+  MessageCircle,
   MessageSquare,
 } from 'lucide-react';
 import { PageId, UserRole, CompanyEntity } from '../types';
@@ -113,6 +114,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'super_admin_notifications',
       label: 'Diffusion Notifications',
       icon: <Send className="w-[18px] h-[18px]" />,
+    },
+    {
+      id: 'super_admin_whatsapp',
+      label: 'WhatsApp Logs',
+      icon: <MessageCircle className="w-[18px] h-[18px]" />,
     },
     {
       id: 'super_admin_audits',
