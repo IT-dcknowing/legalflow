@@ -1183,6 +1183,41 @@ async function trackOutboxFailure(to, text, error) {
   }
 }
 
+// --- Indicateur de frappe : « Legal Flow écrit… » pendant le LLM --------------
+// Format officiel Meta : lu + typing sur le wamid reçu. Expire à la réponse
+// ou après 25 s → rafraîchi à 20 s car notre LLM met 10-22 s. Non bloquant.
+async function sendTypingIndicator(to, wamid) {
+  if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN || !to) return null;
+  const body = { messaging_product: 'whatsapp', to };
+  if (wamid) {
+    body.status = 'read';
+    body.message_id = wamid;
+  }
+  body.typing_indicator = { type: 'text' };
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/${META_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+    if (!r.ok) {
+      const errText = await r.text().catch(() => '');
+      console.warn('[webhook] typing indicator HTTP ' + r.status + ' : ' + errText.slice(0, 300));
+      return null;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[webhook] typing indicator impossible : ' + (e && e.message ? e.message : e));
+    return null;
+  }
+}
+
 async function sendWhatsAppMessage(to, text) {
   if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
     console.warn('[webhook] envoi ignoré : WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN manquants.');
@@ -1407,8 +1442,17 @@ app.post('/webhook', async (req, res) => {
       if (!from) continue;
       if (wamid) await markProcessed(wamid, { state: 'processing', from });
       if (message.text && text) {
-        const reply = await processLegalFlowMessage(from, text);
-        await sendWhatsAppMessage(from, reply);
+        // « Écrit… » immédiat, rafraîchi pendant le calcul LLM.
+        await sendTypingIndicator(from, wamid);
+        const typingRefresh = setTimeout(() => {
+          sendTypingIndicator(from, wamid).catch(() => {});
+        }, 20000);
+        try {
+          const reply = await processLegalFlowMessage(from, text);
+          await sendWhatsAppMessage(from, reply);
+        } finally {
+          clearTimeout(typingRefresh);
+        }
         if (wamid) await markProcessed(wamid, { state: 'done', from });
       } else {
         console.log(`[webhook] message non-texte ignoré (type=${type}).`);
@@ -1429,7 +1473,7 @@ exports.__test__ = {
   blankConversationState, updateConversationState, needsClarification,
   buildClarificationReply, expandQueryForRetrieval, buildConversationContext,
   signatureValide, normalizeIvorianPhone, isValidIvorianPhone,
-  processedRecord, markProcessed,
+  processedRecord, markProcessed, sendTypingIndicator,
 };
 
 // Exposer la fonction (URL : https://[REGION]-legalflowio.cloudfunctions.net/whatsappWebhook/webhook)
