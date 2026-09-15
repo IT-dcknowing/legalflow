@@ -1580,7 +1580,216 @@ function getMcpServer() {
   );
 
   mcpServer = server;
+  registerBusinessTools(server);
   return server;
+}
+
+/**
+ * Outils métier Legal Flow pour DC INTELLIGENCE (backend métier, pas routeur).
+ * RÉPONDRE uniquement (sauf intake = PRÉPARER) : aucune mutation métier.
+ * Identité : selected toujours null — DC fait choisir en cas multi-entreprises.
+ * Sans SUPABASE_SERVICE_ROLE_KEY : dégradation explicite, jamais d'invention.
+ */
+function registerBusinessTools(server) {
+  const { z } = require('zod');
+  const data = require('./lib/data');
+  const identity = require('./lib/identity');
+  const business = require('./lib/business');
+  const tasks = require('./lib/tasks');
+
+  const needBackend = () =>
+    data.backendStatus() === 'ok'
+      ? null
+      : { backend: 'not_configured', error: 'SUPABASE_SERVICE_ROLE_KEY manquant côté Legal Flow.' };
+
+  const needDb = () => getFirestore();
+
+  server.tool(
+    'get_user_context',
+    "RÉPONDRE — Contexte d'un contact DC : profils Legal Flow + entreprises liées (toujours en liste, selected:null).",
+    { phone: z.string().min(8).max(20) },
+    async ({ phone }) => mcpText(await identity.resolveIdentity(String(phone)))
+  );
+
+  server.tool(
+    'get_user_companies',
+    'RÉPONDRE — Entreprises liées à un numéro. Si plusieurs : demander à l’utilisateur, ne jamais deviner.',
+    { phone: z.string().min(8).max(20) },
+    async ({ phone }) => {
+      const id = await identity.resolveIdentity(String(phone));
+      return mcpText({ backend: id.backend, phone: id.phone, companies: id.companies, multiple: id.multiple, selected: null, instruction: id.instruction });
+    }
+  );
+
+  server.tool(
+    'get_company_context',
+    "RÉPONDRE — Fiche entreprise complète : identité + profil fiscal + conformité + pièces manquantes (compteurs).",
+    { entreprise_id: z.string().uuid(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      const pub = identity.publicEntreprise(e);
+      const snap = business.obligationsSnapshot(pub, ref_date);
+      const parts = business.splitSnapshot(snap);
+      return mcpText({
+        backend: 'ok', entreprise: pub,
+        profil_fiscal: { regime_fiscal: pub.regime_fiscal, secteur: pub.secteur, effectif: pub.effectif, ca_estime: pub.ca_estime, profil_complet: pub.profil_complet },
+        conformite: business.complianceSnapshot(snap),
+        compteurs: { en_retard: parts.overdue.length, a_venir: parts.upcoming.length },
+        pieces_manquantes: business.missingDocuments(pub, snap).length,
+      });
+    }
+  );
+
+  server.tool(
+    'get_tax_profile',
+    'RÉPONDRE — Profil fiscal et social (régime, secteur, effectif, CA, complétude).',
+    { entreprise_id: z.string().uuid() },
+    async ({ entreprise_id }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      const pub = identity.publicEntreprise(e);
+      return mcpText({
+        backend: 'ok', entreprise_id, regime_fiscal: pub.regime_fiscal, secteur: pub.secteur,
+        forme_juridique: pub.forme_juridique, effectif: pub.effectif, ca_estime: pub.ca_estime,
+        profil_complet: pub.profil_complet,
+      });
+    }
+  );
+
+  server.tool(
+    'get_obligations',
+    'RÉPONDRE — Obligations suivies (mois précédent/courant/prochain) avec statuts. Moteur legal-rules-2026.1.',
+    { entreprise_id: z.string().uuid(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      return mcpText({ backend: 'ok', ...business.obligationsSnapshot(identity.publicEntreprise(e), ref_date) });
+    }
+  );
+
+  server.tool(
+    'get_upcoming_deadlines',
+    'RÉPONDRE — Échéances à venir triées (exclut les retards).',
+    { entreprise_id: z.string().uuid(), limit: z.number().int().min(1).max(30).optional(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, limit, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      const parts = business.splitSnapshot(business.obligationsSnapshot(identity.publicEntreprise(e), ref_date));
+      return mcpText({ backend: 'ok', entreprise_id, upcoming: parts.upcoming.slice(0, limit || 10) });
+    }
+  );
+
+  server.tool(
+    'get_overdue_obligations',
+    'RÉPONDRE — Échéances en retard (critiques, à relancer en priorité).',
+    { entreprise_id: z.string().uuid(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      const parts = business.splitSnapshot(business.obligationsSnapshot(identity.publicEntreprise(e), ref_date));
+      return mcpText({ backend: 'ok', entreprise_id, overdue: parts.overdue });
+    }
+  );
+
+  server.tool(
+    'get_compliance_status',
+    'RÉPONDRE — Score de conformité, compteurs, prochaine échéance.',
+    { entreprise_id: z.string().uuid(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      return mcpText({ backend: 'ok', entreprise_id, ...business.complianceSnapshot(business.obligationsSnapshot(identity.publicEntreprise(e), ref_date)) });
+    }
+  );
+
+  server.tool(
+    'get_company_documents',
+    'RÉPONDRE — Liste des documents du coffre privé (noms + tailles, jamais le contenu binaire).',
+    { entreprise_id: z.string().uuid() },
+    async ({ entreprise_id }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      try {
+        const files = await data.listStoragePaths('preuves', entreprise_id);
+        return mcpText({
+          backend: 'ok', entreprise_id,
+          documents: (files || []).map((f) => ({ nom: f.name, taille: f.metadata ? f.metadata.size : null })),
+        });
+      } catch (err) {
+        return mcpText({ backend: 'ok', entreprise_id, error: err && err.code ? err.code : 'STORAGE_ERROR' });
+      }
+    }
+  );
+
+  server.tool(
+    'get_missing_documents',
+    'RÉPONDRE — Pièces manquantes probables (profil incomplet + quittances des retards).',
+    { entreprise_id: z.string().uuid(), ref_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    async ({ entreprise_id, ref_date }) => {
+      const blocked = needBackend();
+      if (blocked) return mcpText({ ...blocked, entreprise_id });
+      const e = await data.getEntreprise(entreprise_id);
+      if (!e) return mcpText({ backend: 'ok', entreprise_id, found: false });
+      const pub = identity.publicEntreprise(e);
+      return mcpText({ backend: 'ok', entreprise_id, missing: business.missingDocuments(pub, business.obligationsSnapshot(pub, ref_date)) });
+    }
+  );
+
+  server.tool(
+    'lf_create_task',
+    "PRÉPARER — Déclare une opération longue côté DC (stockée 'queued'). DC interroge lf_task_result. Même contrat quand le worker async arrivera.",
+    { type: z.string().min(3).max(60), input: z.record(z.string(), z.unknown()).optional() },
+    async ({ type, input }) => {
+      const db = needDb();
+      if (!db) return mcpText({ error: 'Stockage tâches indisponible.' });
+      const ref = await db.collection('mcp_tasks').add({ type, input: input || {}, status: 'queued', createdAt: Date.now() });
+      return mcpText(tasks.queuedEnvelope(ref.id, type));
+    }
+  );
+
+  server.tool(
+    'lf_task_result',
+    'RÉPONDRE — Résultat d’une tâche (queued/done/error). Même contrat en sync et async.',
+    { taskId: z.string().min(5).max(100) },
+    async ({ taskId }) => {
+      const db = needDb();
+      if (!db) return mcpText({ error: 'Stockage tâches indisponible.' });
+      return mcpText(await tasks.getTaskResult(db, FIRESTORE_TIMEOUT_ADMIN_MS, String(taskId)));
+    }
+  );
+
+  server.tool(
+    'lf_intake_document',
+    "PRÉPARER — Intake d'une extraction VLM structurée (DC a lu le visuel ; Legal Flow ne fait pas de vision). Classe + route + trace d'audit, sans mutation métier.",
+    { extract: z.record(z.string(), z.unknown()) },
+    async ({ extract }) => {
+      const db = needDb();
+      const verdict = business.classifyIntake(extract || {});
+      let intakeId = null;
+      if (db) {
+        try {
+          const ref = await db.collection('mcp_intake').add({ extract, verdict, at: Date.now() });
+          intakeId = ref.id;
+        } catch {
+          /* traçabilité best-effort */
+        }
+      }
+      return mcpText({ intakeId, ...verdict });
+    }
+  );
 }
 
 const mcpAttempts = new Map();
