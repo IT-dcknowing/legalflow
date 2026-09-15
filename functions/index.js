@@ -18,6 +18,26 @@ const crypto = require('crypto');
 // il bloque le cold start en appelant le serveur de métadonnées Google.
 
 const app = express();
+// CORS : le front (Hosting) appelle ces endpoints avec des en-têtes custom
+// (x-admin-token, JSON) → le preflight OPTIONS doit répondre 204 + ACAO.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ||
+  'https://legalflowio.web.app,http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type,Authorization,X-Admin-Token,X-Notify-Token,X-Hub-Signature-256'
+  );
+  res.setHeader('Access-Control-Max-Age', '3600');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 // Conserve le corps brut pour la vérification HMAC (le JSON parsé ne suffit pas).
 app.use(
   express.json({
@@ -43,6 +63,9 @@ const OPENROUTER_MAX_TOKENS = parseInt(process.env.OPENROUTER_MAX_TOKENS || '900
 // Jeton lecture supervision (page WhatsApp Logs). Si absent : endpoint désactivé.
 // Transitoire démo : à remplacer par Custom Claims à la réactivation de l'auth.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+// Jeton serveur MCP (connexion distante d'une autre IA/plateforme).
+const MCP_TOKEN = process.env.MCP_TOKEN || '';
+const DRAFT_TTL_MS = 15 * 60 * 1000;
 // Émulateur local : assouplissements autorisés UNIQUEMENT ici (jamais en prod).
 const IS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
 
@@ -1381,6 +1404,222 @@ app.get('/admin/whatsapp-overview', async (req, res) => {
     recentStatuses,
     outbox,
   });
+});
+
+// --- Serveur MCP Legal Flow (connexion distante d'une autre IA) --------------
+// Protocole MCP officiel (Streamable HTTP, sans session) sur POST /mcp.
+// Tiers d'action stricts : RÉPONDRE (lecture) ≠ RECOMMANDER (avis) ≠
+// PRÉPARER (brouillon sans effet) ≠ EXÉCUTER (effet réel, confirmation exigée).
+let mcpServer = null;
+
+function mcpText(obj) {
+  return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2).slice(0, 12000) }] };
+}
+
+function getMcpServer() {
+  if (mcpServer) return mcpServer;
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { z } = require('zod');
+  const server = new McpServer({ name: 'legalflow', version: '1.0.0' });
+
+  // ——— RÉPONDRE (lecture seule, aucun effet) ———
+  server.tool(
+    'lf_phone_info',
+    "RÉPONDRE — Fiche du numéro WhatsApp Business (Meta : numéro affiché, nom vérifié, qualité).",
+    {},
+    async () => {
+      if (!WHATSAPP_PHONE_NUMBER_ID || !WHATSAPP_ACCESS_TOKEN) {
+        return mcpText({ error: 'Identifiants Meta non configurés.' });
+      }
+      const r = await fetch(
+        `https://graph.facebook.com/${META_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}?fields=display_phone_number,verified_name,quality_rating,code_verification_status`,
+        { headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}` } }
+      );
+      return mcpText(r.ok ? await r.json() : { error: 'Meta HTTP ' + r.status });
+    }
+  );
+
+  server.tool(
+    'lf_search_docs',
+    'RÉPONDRE — Recherche juridique ivoirienne (CGI, CNPS, CMU, FDFP, douanes). Retourne des extraits sourcés, jamais un avis définitif.',
+    { query: z.string().min(2).max(500), limit: z.number().int().min(1).max(10).optional() },
+    async ({ query, limit }) => {
+      const docs = await searchLegalDocuments(String(query), limit || 5);
+      return mcpText(
+        (docs || []).map((d) => ({
+          source: d.source_fichier, reference: d.reference_article,
+          similarite: d.similarity, extrait: String(d.contenu).slice(0, 800),
+        }))
+      );
+    }
+  );
+
+  server.tool(
+    'lf_whatsapp_conversations',
+    'RÉPONDRE — Sessions WhatsApp : sujet, intention, étape, corrections, derniers messages. Lecture seule.',
+    { limit: z.number().int().min(1).max(50).optional(), active24h: z.boolean().optional() },
+    async ({ limit, active24h }) => {
+      const db = getFirestore();
+      if (!db) return mcpText({ error: 'Stockage sessions indisponible.' });
+      const snap = await withFirestoreTimeout(
+        db.collection('whatsapp_sessions').orderBy('updatedAt', 'desc').limit(limit || 20).get(),
+        'firestore', FIRESTORE_TIMEOUT_ADMIN_MS
+      );
+      const now = Date.now();
+      const out = [];
+      snap.forEach((d) => {
+        const s = d.data() || {};
+        if (active24h && !(s.updatedAt && now - s.updatedAt < 86400000)) return;
+        out.push({
+          phone: d.id, topic: s.topic || null, intent: s.user_intent || null,
+          stage: s.conversation_stage || null, messageCount: (s.history || []).length,
+          corrections: (s.corrections || []).length,
+          lastMessages: (s.history || []).slice(-6), updatedAt: s.updatedAt || null,
+        });
+      });
+      return mcpText(out);
+    }
+  );
+
+  server.tool(
+    'lf_delivery_status',
+    "RÉPONDRE — Statut de distribution d'un message (sent/delivered/read/failed + erreurs Meta).",
+    { wamid: z.string().min(5).max(200) },
+    async ({ wamid }) => {
+      const db = getFirestore();
+      if (!db) return mcpText({ error: 'Stockage statuts indisponible.' });
+      const snap = await withFirestoreTimeout(
+        db.collection('whatsapp_status').doc(String(wamid)).get(), 'firestore', FIRESTORE_TIMEOUT_ADMIN_MS
+      );
+      if (!snap.exists) return mcpText({ wamid, found: false });
+      return mcpText({ wamid, found: true, ...(snap.data() || {}) });
+    }
+  );
+
+  // ——— RECOMMANDER (avis argumenté, aucun effet) ———
+  server.tool(
+    'lf_recommend_actions',
+    'RECOMMANDER — Analyse une conversation et propose des actions (relance, clarification, bascule in-app). Avis uniquement : utilisez wa_prepare_message puis wa_execute_send pour agir.',
+    { phone: z.string().min(8).max(20) },
+    async ({ phone }) => {
+      const session = await getSession(String(phone));
+      const recos = [];
+      if (!session.topic && (!session.history || session.history.length === 0)) {
+        recos.push({ priorite: 'info', action: 'Aucune conversation connue pour ce numéro.' });
+        return mcpText(recos);
+      }
+      if (session.conversation_stage === 'awaiting_clarification') {
+        recos.push({ priorite: 'haute', action: 'Le contact attend une clarification : reformuler la question de cadrage.' });
+      }
+      const lastCorr = (session.corrections || []).slice(-1)[0];
+      if (lastCorr) {
+        recos.push({ priorite: 'haute', action: 'Ne plus aborder « ' + lastCorr.error + ' » ; rester sur « ' + lastCorr.fix + ' ».' });
+      }
+      if (session.user_intent === 'PAYMENT_DEADLINE' || session.user_intent === 'PENALTY') {
+        recos.push({ priorite: 'moyenne', action: 'Envoyer un rappel J-1 avant échéance via wa_prepare_message.' });
+      }
+      if (recos.length === 0) {
+        recos.push({ priorite: 'basse', action: 'Poursuivre la conversation : sujet « ' + (session.topic || 'général') + ' ».' });
+      }
+      return mcpText({ phone, sujet: session.topic, intention: session.user_intent, recommandations: recos });
+    }
+  );
+
+  // ——— PRÉPARER (brouillon validé, AUCUN envoi) ———
+  server.tool(
+    'wa_prepare_message',
+    "PRÉPARER — Valide destinataires + texte et rend un draftId (15 min, usage unique). N'envoie RIEN. Passez ensuite à wa_execute_send avec confirm:true.",
+    {
+      recipients: z.array(z.string().min(8).max(20)).min(1).max(20),
+      text: z.string().min(1).max(4000),
+    },
+    async ({ recipients, text }) => {
+      const bad = recipients.filter((p) => !isValidIvorianPhone(p));
+      if (bad.length) return mcpText({ error: 'Numéros ivoiriens invalides : ' + bad.join(', ') });
+      const db = getFirestore();
+      if (!db) return mcpText({ error: 'Stockage brouillons indisponible.' });
+      const ref = await db.collection('mcp_drafts').add({
+        recipients, text, used: false, createdAt: Date.now(),
+      });
+      return mcpText({
+        draftId: ref.id, recipients, preview: String(text).slice(0, 300),
+        expiresInSeconds: Math.round(DRAFT_TTL_MS / 1000),
+        next: "Appelez wa_execute_send avec { draftId, confirm: true } pour envoyer.",
+      });
+    }
+  );
+
+  // ——— EXÉCUTER (effet réel : confirmation + traçabilité obligatoires) ———
+  server.tool(
+    'wa_execute_send',
+    'EXÉCUTER — Envoie un brouillon PRÉPARÉ. Exige { draftId, confirm: true }. Chaque envoi est journalisé (mcp_audit). Sans confirmation : refus.',
+    { draftId: z.string().min(5).max(100), confirm: z.boolean() },
+    async ({ draftId, confirm }) => {
+      if (confirm !== true) {
+        return mcpText({ error: 'Confirmation requise : rappelez avec { draftId, confirm: true }.' });
+      }
+      const db = getFirestore();
+      if (!db) return mcpText({ error: 'Stockage brouillons indisponible.' });
+      const ref = db.collection('mcp_drafts').doc(String(draftId));
+      const snap = await withFirestoreTimeout(ref.get(), 'firestore', FIRESTORE_TIMEOUT_ADMIN_MS);
+      if (!snap.exists) return mcpText({ error: 'Brouillon introuvable.' });
+      const draft = snap.data() || {};
+      if (draft.used) return mcpText({ error: 'Brouillon déjà utilisé (anti-rejeu).' });
+      if (Date.now() - (draft.createdAt || 0) > DRAFT_TTL_MS) return mcpText({ error: 'Brouillon expiré (15 min).' });
+      await ref.update({ used: true, usedAt: Date.now() });
+      const results = [];
+      for (const to of draft.recipients || []) {
+        const sent = await sendWhatsAppMessage(to, draft.text);
+        results.push({ to, ok: !!sent });
+      }
+      await db.collection('mcp_audit').add({
+        draftId, results, at: Date.now(), by: 'mcp:wa_execute_send',
+      });
+      return mcpText({ draftId, results });
+    }
+  );
+
+  mcpServer = server;
+  return server;
+}
+
+const mcpAttempts = new Map();
+function mcpRateOk(ip) {
+  const now = Date.now();
+  const arr = (mcpAttempts.get(ip) || []).filter((t) => now - t < 60000);
+  if (arr.length >= 30) return false;
+  arr.push(now);
+  mcpAttempts.set(ip, arr);
+  return true;
+}
+
+app.post('/mcp', async (req, res) => {
+  const auth = req.headers.authorization || '';
+  if (!MCP_TOKEN || auth !== 'Bearer ' + MCP_TOKEN) {
+    return res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Jeton MCP requis.' }, id: null });
+  }
+  const ip = String((req.headers['x-forwarded-for'] || req.ip || 'unknown')).split(',')[0].trim();
+  if (!mcpRateOk(ip)) return res.status(429).json({ error: 'Débit maximal atteint (30/min).' });
+  try {
+    const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on('close', () => {
+      try {
+        if (transport.close) transport.close();
+      } catch {
+        /* déjà fermé */
+      }
+    });
+    await getMcpServer().connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (e) {
+    console.error('[mcp] erreur : ' + (e && e.message ? e.message : e));
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur serveur MCP.' });
+  }
+});
+
+app.get('/mcp', (_req, res) => {
+  res.status(405).json({ error: 'Utilisez POST (MCP Streamable HTTP). Voir MCP_INTEGRATION.md.' });
 });
 
 // --- Relais de diffusion (digests, urgences) : usage serveur/cron uniquement ---
