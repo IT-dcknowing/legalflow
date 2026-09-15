@@ -3,6 +3,12 @@
 Serveur MCP officiel (Streamable HTTP, sans session) adossé au backend Legal Flow :
 `POST https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook/mcp`
 
+> **URLs.** L'URL ci-dessus (Cloud Functions) est la SEULE opérationnelle aujourd'hui.
+> `legalflowio.web.app` = site statique, **pas de MCP**. Les sous-domaines
+> `legal-flow.dc-knowing.com`, `compta-flow.dc-knowing.com`, `reco.dc-knowing.com`
+> n'existent pas encore : l'équipe DC les créera (domaine personnalisé → même
+> fonction) et il suffira de remplacer l'hôte, chemin `/mcp` inchangé.
+
 ## 1. Authentification
 
 - En-tête : `Authorization: Bearer <MCP_TOKEN>` (jeton fourni hors bande, à stocker en secret).
