@@ -1,0 +1,134 @@
+================================================================================
+PASSATION DC INTELLIGENCE — Legal Flow : MCP, logs WhatsApp, configuration
+Date : 15/09/2026 — Instantané : 6 conversations (2 actives 24h), qualité GREEN
+Règle : AUCUNE valeur secrète dans ce fichier (noms + provenance uniquement).
+================================================================================
+
+1. OÙ SONT LES MCP (liens exacts, vérifiés en prod)
+--------------------------------------------------------------------------------
+Base Cloud Functions (projet Firebase legalflowio, région us-central1) :
+  https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook
+
+  /mcp  (POST uniquement, GET → 405)
+    Serveur MCP officiel, Streamable HTTP sans session, SDK @modelcontextprotocol/sdk ^1.30.0.
+    C'EST LE SEUL MCP OPÉRATIONNEL. Ni legalflowio.web.app (site statique),
+    ni legal-flow.dc-knowing.com / compta-flow.dc-knowing.com / reco.dc-knowing.com
+    (inexistants à ce jour — à créer côté DC comme domaines personnalisés vers
+    cette même fonction ; seul l'hôte changera, chemin /mcp inchangé).
+
+Autres endpoints de la même fonction :
+  /webhook                        Webhook Meta (GET verify / POST messages) — NE PAS appeler
+  /webhook/webhook                Callback configuré côté Meta (chemin Express interne)
+  /optin                   POST   Inscription alertes + bienvenue (rate-limit 5/min/IP)
+  /notify                  POST   Envoi serveur-à-serveur, header x-notify-token + 10/min/IP
+  /admin/whatsapp-overview GET    Supervision, header x-admin-token + 10/min/IP
+
+Console Firebase : https://console.firebase.google.com/project/legalflowio/overview
+Site : https://legalflowio.web.app — Dépôt : https://github.com/IT-dcknowing/legalflow.git (main)
+Supabase : https://zlyqtrzoqfssbleigaqe.supabase.co
+
+2. CONNEXION MCP (recette pour l'équipe DC)
+--------------------------------------------------------------------------------
+  URL : POST {base}/mcp
+  Auth : Authorization: Bearer <MCP_TOKEN> (jeton transmis hors bande). Sans : 401.
+  Débit : 30 req/min/IP (429 au-delà).
+  Handshake : {"jsonrpc":"2.0","id":1,"method":"initialize",
+    "params":{"protocolVersion":"2025-06-18","capabilities":{},
+    "clientInfo":{"name":"dc-intelligence","version":"x.y"}}}
+    → serverInfo { name: "legalflow", version: "1.0.0" }.
+  Puis : tools/list → tools/call. Réponses : { content:[{type:"text",text:"<JSON>"}] }.
+  Config type : { "mcpServers": { "legalflow": { "url": "<base>/mcp",
+    "headers": { "Authorization": "Bearer <MCP_TOKEN>" } } } }
+  Clients stdio : pont npx -y mcp-remote <url> --header "Authorization: Bearer <TOKEN>".
+  Doc complète + curl prêts à copier : MCP_INTEGRATION.md (dépôt).
+  Contrat métier + identité + migration : DC_INTELLIGENCE_CONTRAT.md (dépôt).
+  Dossier développeur général : DOSSIER_TRANSMISSION_MCP.md (dépôt).
+
+3. CATALOGUE DES 20 OUTILS (tiers stricts)
+--------------------------------------------------------------------------------
+RÉPONDRE (lecture, effet nul) :
+  lf_phone_info() — fiche numéro Meta.
+  lf_search_docs({query(2..500), limit?(1..10)}) — extraits juridiques sourcés.
+  lf_whatsapp_conversations({limit?(1..50), active24h?}) — sessions (sujet, intention,
+    étape, corrections, 6 derniers messages).
+  lf_delivery_status({wamid}) — statut + erreurs Meta.
+  get_user_context({phone}) — profils + entreprises + multiple + selected:null.
+  get_user_companies({phone}) — entreprises liées (jamais de devinette).
+  get_company_context({entreprise_id, ref_date?}) — fiche + fiscal + conformité + compteurs.
+  get_tax_profile({entreprise_id}) — régime, secteur, effectif, CA, complétude.
+  get_obligations({entreprise_id, ref_date?}) — snapshot moteur legal-rules-2026.1 (15 lignes).
+  get_upcoming_deadlines({entreprise_id, limit?, ref_date?}) — triées, hors retards.
+  get_overdue_obligations({entreprise_id, ref_date?}) — retards.
+  get_compliance_status({entreprise_id, ref_date?}) — score 0-100 + prochaine échéance.
+  get_company_documents({entreprise_id}) — NOMS + tailles uniquement, jamais le binaire.
+  get_missing_documents({entreprise_id, ref_date?}) — RCCM/critères/quittances.
+  lf_task_result({taskId}) — queued/done/error/unknown.
+RECOMMANDER (avis, effet nul) :
+  lf_recommend_actions({phone}) — priorités haute/moyenne/basse.
+PRÉPARER (brouillon, AUCUN envoi) :
+  wa_prepare_message({recipients[1..20] (CI validés), text(1..4000)}) → {draftId (15 min,
+    usage unique), preview, expiresInSeconds}.
+  lf_create_task({type, input?}) → {taskId, status:'queued'} (enveloppe uniforme sync/async).
+  lf_intake_document({extract}) — classification VLM : facture_fournisseur→Compta Flow,
+    avis_fiscal→Legal Flow, releve_bancaire→RECO, contrat→Legal Flow, sinon inconnu.
+EXÉCUTER (effet réel, journalisé mcp_audit) :
+  wa_execute_send({draftId, confirm:true}) — sans confirm:true : REFUS ; rejouement : REFUS ;
+    expiré (>15 min) : REFUS. Résultat : {draftId, results:[{to, ok}]}.
+
+4. LOGS WHATSAPP — CONTENU EXACT (Firestore legalflowio, base (default) nam5)
+--------------------------------------------------------------------------------
+4.1 whatsapp_sessions (clé = numéro expéditeur, TTL logique 24 h) — 6 docs au 15/09 :
+  { topic, topic_aliases[], tax_regime, tax_year, user_intent (ex: PAYMENT_DEADLINE),
+    conversation_stage (new/ongoing/clarified/awaiting_clarification),
+    previous_question, user_correction, active_document, requires_source_verification,
+    entities[], corrections[{error, fix, at, priority:'tres_elevee'}],
+    history[{role:user|assistant, text(≤500 car.), at}] (12 max), jurisdiction, updatedAt }
+4.2 whatsapp_processed (clé = wamid, TTL 48 h) — anti-doublons Meta :
+  { state: processing/done/ignored, from, at }
+4.3 whatsapp_status (clé = wamid) — accusés Meta :
+  { status: sent/delivered/read/failed, timestamp, recipient_id, errors[{code,title,message}], at }
+  Instantané : 12 accusés (6 delivered, 2 read, 4 failed — échecs = règle 24 h sur numéros de test).
+4.4 whatsapp_outbox (auto-id) — file des morts : { to, preview(200 car.), error, at } (0 au 15/09).
+4.5 mcp_drafts (auto-id) : { recipients[], text, used, createdAt } (TTL 15 min).
+4.6 mcp_audit (auto-id) : { draftId, results[{to, ok}], at, by }.
+4.7 mcp_tasks (auto-id) : { type, input, status, result?, error?, createdAt, doneAt? }.
+4.8 mcp_intake (auto-id) : { extract, verdict{type, vers, systeme, confiance}, at }.
+Lecture : Admin SDK côté backend UNIQUEMENT (jamais exposé au LLM ni à DC en direct —
+tout passe par les outils §3). Requêtes utiles : orderBy updatedAt/desc (sessions),
+orderBy at/desc (status/outbox).
+
+5. CONFIGURATION COMPLÈTE (noms + provenance, sans valeurs)
+--------------------------------------------------------------------------------
+Meta Graph API v26.0 (dernière, 29/07/2026) — Phone Number ID 1336972212826885 —
+numéro +225 05 74 52 90 52 (« Dc Knowing », VERIFIED, qualité GREEN) —
+Webhook https://us-central1-legalflowio.cloudfunctions.net/whatsappWebhook/webhook
+(Verify Token + champ messages).
+Functions env (functions/.env, gitignoré ; référence : functions/.env.example) :
+  VERIFY_TOKEN, WHATSAPP_APP_SECRET, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN
+  (permanent), META_API_VERSION=v26.0, SUPABASE_URL, SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY (serveur seul, active les 10 outils métier),
+  OPENROUTER_API_KEY, OPENROUTER_MODEL=dots-studio/dots-3-note-preview:free,
+  OPENROUTER_TIMEOUT_MS=25000, OPENROUTER_MAX_TOKENS=900,
+  ALLOWED_ORIGINS (prod + localhost), ADMIN_TOKEN, MCP_TOKEN.
+Front env (.env racine, gitignoré) : VITE_SUPABASE_*, VITE_FIREBASE_*,
+  VITE_WHATSAPP_FUNCTIONS_BASE, VITE_WHATSAPP_ADMIN_TOKEN, VITE_DEMO_MODE=true.
+Comportement : mémoire session Firestore (repli volatile), LLM→repli déterministe,
+  retry 429/5xx, typing indicator + refresh 20 s, HMAC fail-closed (bypass émulateur
+  seul), CORS 204, garde Firestore 3 s (10 s admin), rate-limits §2.
+Migrations Supabase : 0001-0009 (auth, RLS, inscription, notifications, veille,
+  journal ownership). Bucket preuves (privé) + veille (public).
+
+6. PRISE EN MAIN DC (ordre conseillé)
+--------------------------------------------------------------------------------
+1. Recevoir MCP_TOKEN + ADMIN_TOKEN (hors bande) ; tester handshake + tools/list (20 outils).
+2. Jouer le contrat live (DC_INTELLIGENCE_CONTRAT.md §8) : identité dégradée → tax →
+   compliance → task → garde-fous execute.
+3. Phase pilote : lecture seule (webhook Legal Flow seul actif).
+4. Double-run : ajouter l'endpoint DC côté Meta SANS retirer Legal Flow ; comparer.
+5. Bascule : Meta → DC ; webhook Legal Flow = repli (rollback < 5 min).
+6. Créer les domaines dc-knowing.com → remplacer l'hôte (chemin /mcp inchangé).
+7. Régénérer tous les secrets ayant transité en clair (Meta + Supabase), nous remettre
+   les nouveaux, redéployer.
+8. Réserver Blaze (Cloud Tasks/PubSub) pour worker async + cron digests 8h/17h GMT.
+FIN.
+================================================================================
