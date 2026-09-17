@@ -8,6 +8,13 @@
 
 ## 2. Nouveaux outils MCP métier (tous RÉPONDRE sauf intake)
 
+> **`lf_ask` (RÉPONDRE) — poser une question à l'IA Legal Flow : EXACTEMENT le même
+> pipeline que WhatsApp** (compréhension, mémoire de session, RAG, LLM, repli).
+> `{ question(2..1000), session_key?(3..60), dossier? }` → `{ answer, sources[3],
+> intent, topic, stage, correction, clarification, fallback, session_key }`.
+> Renvoyez le même `session_key` à chaque tour (numéro WhatsApp ou `dc:<user-id>`)
+> pour la continuité. Timeout conseillé côté appelant : 60 s.
+
 | Outil | Entrée | Retour |
 |---|---|---|
 | `get_user_context` | `{ phone }` | profils + entreprises + `multiple` + `selected:null` + instruction |
@@ -67,7 +74,7 @@ WhatsApp phone ──profiles.whatsapp_number──▶ profils (user_id, rôle)
 ## 8. Tests d'intégration DC ↔ Legal Flow
 - Unitaires (ce dépôt, `functions/__tests__/dc-contract.test.js`, natif node:test) : snapshot 15 obligations/score 67, pièces manquantes, classification VLM (4 routes + inconnu), enveloppe tâche done/unknown, identité multi-entreprises (selected:null + instruction), dégradation sans clé.
 - Contrat live (côté DC, à jouer après activation `SUPABASE_SERVICE_ROLE_KEY`) :
-  1. `tools/list` → 20 outils (7 v1 + 13 DC).
+  1. `tools/list` → 21 outils (7 v1 + 14 DC dont `lf_ask`).
   2. `get_user_context` (numéro test) → `backend:'ok'`, `selected:null`.
   3. `get_compliance_status` → `engine:'legal-rules-2026.1'`, score 0-100.
   4. `lf_create_task` → `queued`, puis `lf_task_result` → même `taskId`.

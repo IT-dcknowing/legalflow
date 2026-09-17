@@ -59,6 +59,11 @@ curl -s -X POST $BASE -H "$H" -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"wa_prepare_message","arguments":{"recipients":["+2250701020304"],"text":"Rappel : TVA due le 20."}}}'
 
+# Poser une question à l'IA (même pipeline que WhatsApp, avec mémoire si session_key stable)
+curl -s -X POST $BASE -H "$H" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"lf_ask","arguments":{"question":"À quel moment on paie la TVA ?","session_key":"dc:user-123"}}}'
+
 # Exécuter (confirmé)
 curl -s -X POST $BASE -H "$H" -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \

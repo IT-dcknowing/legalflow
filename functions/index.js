@@ -1055,10 +1055,15 @@ function buildDeterministicExpertResponse(query, sources, dossierContext) {
 // --- Traitement du message : pipeline Context Engine -------------------------
 // message → compréhension → mémoire de session → recherche juridique →
 // raisonnement LLM → réponse. Chaque tour met à jour l'état, jamais remplacé.
-async function processLegalFlowMessage(from, text) {
+// runAiPipeline est le CŒUR RÉUTILISABLE : WhatsApp ET l'outil MCP lf_ask
+// l'appellent (même mémoire, même RAG, même LLM). senderKey = numéro WhatsApp
+// ou clé de session DC (ex : "dc:<user-id>") pour la continuité.
+async function runAiPipeline(senderKey, text, dossierHint) {
   const question = (text || '').slice(0, 1000);
-  const sender = from || 'unknown';
-  const dossierContext = "Question reçue via WhatsApp du " + sender + ". Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.";
+  const sender = senderKey || 'unknown';
+  const dossierContext =
+    dossierHint ||
+    "Question reçue via WhatsApp du " + sender + ". Entreprise ivoirienne assujettie au régime RSI dans le secteur BTP.";
 
   const session = await getSession(sender);
   const upd = updateConversationState(session, question);
@@ -1075,6 +1080,12 @@ async function processLegalFlowMessage(from, text) {
     if (session.history.length > HISTORY_MAX) session.history = session.history.slice(-HISTORY_MAX);
     await saveSession(sender, session);
   };
+  const meta = () => ({
+    intent: upd.intent.id,
+    topic: session.topic,
+    stage: session.conversation_stage,
+    correction: upd.isCorrection,
+  });
 
   try {
     // Désambiguïsation : acronyme nu sans intention → on demande, on n'invente pas.
@@ -1083,12 +1094,15 @@ async function processLegalFlowMessage(from, text) {
       const reply = buildClarificationReply(upd);
       await recordAssistant(reply);
       console.log('[context] clarification demandée (sujet=' + (upd.acronyms[0] ? upd.acronyms[0].code : '?') + ').');
-      return reply;
+      return { reply, sources: [], ...meta(), clarification: true, fallback: false };
     }
 
     // Recherche juridique guidée par le sujet conservé + l'intention.
     const retrievalQuery = expandQueryForRetrieval(question, session, upd);
     const docs = await searchLegalDocuments(retrievalQuery, 6);
+    const sources = (docs || []).slice(0, 3).map((d) => ({
+      source: d.source_fichier, reference: d.reference_article, similarite: d.similarity,
+    }));
     const legalContextText = (docs || [])
       .map(
         (doc, i) =>
@@ -1107,22 +1121,28 @@ async function processLegalFlowMessage(from, text) {
     if (reply) {
       const finalReply = String(reply).slice(0, 4000);
       await recordAssistant(finalReply);
-      return finalReply;
+      return { reply: finalReply, sources, ...meta(), clarification: false, fallback: false };
     }
     console.warn('[webhook] OpenRouter sans réponse, repli déterministe local.');
     const fallback = buildDeterministicExpertResponse(retrievalQuery, docs, dossierContext).slice(0, 4000);
     await recordAssistant(fallback);
-    return fallback;
+    return { reply: fallback, sources, ...meta(), clarification: false, fallback: true };
   } catch (error) {
     console.error('Erreur IA :', error && error.message ? error.message : error);
     try {
       const fallback = buildDeterministicExpertResponse(question, searchLocalCorpus(question, 6), dossierContext).slice(0, 4000);
       await recordAssistant(fallback);
-      return fallback;
+      return { reply: fallback, sources: [], ...meta(), clarification: false, fallback: true };
     } catch {
-      return "⚠️ Désolé, une erreur technique s'est produite. Veuillez réessayer.";
+      return { reply: "⚠️ Désolé, une erreur technique s'est produite. Veuillez réessayer.", sources: [], ...meta(), clarification: false, fallback: true };
     }
   }
+}
+
+// Wrapper WhatsApp : même pipeline, réponse envoyée sur le canal.
+async function processLegalFlowMessage(from, text) {
+  const out = await runAiPipeline(from, text);
+  return out.reply;
 }
 
 // --- Envoyer un message via l'API WhatsApp ---
@@ -1497,6 +1517,34 @@ function getMcpServer() {
   );
 
   // ——— RECOMMANDER (avis argumenté, aucun effet) ———
+  server.tool(
+    'lf_ask',
+    "RÉPONDRE — Pose une question à l'IA Legal Flow (EXACTEMENT le même pipeline que WhatsApp : compréhension, mémoire de session, RAG, LLM, repli). Pour la continuité, renvoyez le même session_key à chaque tour (ex : le numéro WhatsApp ou 'dc:<user-id>'). Timeout côté appelant conseillé : 60 s.",
+    {
+      question: z.string().min(2).max(1000),
+      session_key: z.string().min(3).max(60).optional(),
+      dossier: z.string().min(2).max(300).optional(),
+    },
+    async ({ question, session_key, dossier }) => {
+      const out = await runAiPipeline(
+        session_key || 'mcp:anon',
+        String(question),
+        dossier ? 'Question relayée par DC INTELLIGENCE. ' + String(dossier).slice(0, 300) : undefined
+      );
+      return mcpText({
+        answer: out.reply,
+        sources: out.sources,
+        intent: out.intent,
+        topic: out.topic,
+        stage: out.stage,
+        correction: out.correction,
+        clarification: out.clarification,
+        fallback: out.fallback,
+        session_key: session_key || 'mcp:anon',
+      });
+    }
+  );
+
   server.tool(
     'lf_recommend_actions',
     'RECOMMANDER — Analyse une conversation et propose des actions (relance, clarification, bascule in-app). Avis uniquement : utilisez wa_prepare_message puis wa_execute_send pour agir.',

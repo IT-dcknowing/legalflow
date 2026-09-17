@@ -70,6 +70,7 @@ Protocole : **MCP Streamable HTTP sans session**. Handshake `initialize` → `to
 
 ### Tier RÉPONDRE (lecture, effet nul)
 1. **`lf_phone_info()`** → `{ display_phone_number, verified_name, quality_rating, code_verification_status }` ou `{ error }`.
+2. **`lf_ask({ question, session_key?, dossier? })`** → pose une question à l'IA (même pipeline que WhatsApp : mémoire, RAG, LLM). Même `session_key` = continuité. Timeout conseillé : 60 s.
 2. **`lf_search_docs({ query: string(2..500), limit?: int(1..10)=5 })`** → `[{ source, reference, similarite, extrait(≤800 car.) }]`.
 3. **`lf_whatsapp_conversations({ limit?: int(1..50)=20, active24h?: bool })`** → `[{ phone, topic, intent, stage, messageCount, corrections, lastMessages[-6:], updatedAt }]`.
 4. **`lf_delivery_status({ wamid: string })`** → `{ found, status, timestamp, recipient_id, errors }`.
